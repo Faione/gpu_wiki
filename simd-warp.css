@@ -1,0 +1,36 @@
+.supplement-body { max-width: 960px; margin: auto; padding: 3rem 1.25rem; }
+.supplement .topbar { display: flex; justify-content: space-between; gap: 1rem; }
+.supplement h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); margin: 1rem 0; }
+.supplement h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 1.5rem; }
+.supplement h3 { font-size: 1.2rem; margin-top: 2rem; }
+.supplement p { line-height: 1.9; }
+.supplement section { padding: 2.5rem 0; border-top: 1px solid var(--color-rule); scroll-margin-top: 5rem; }
+.supplement-intro { padding-bottom: 2.5rem; }
+.supplement nav { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-top: 2rem; }
+.experiment { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid var(--color-rule); background: var(--color-paper-2); }
+.experiment .mapping-controls { margin-top: 0; }
+.instruction { font-family: var(--font-mono); padding: .75rem; background: var(--color-ink); color: var(--color-paper); }
+.vector-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; margin: 1rem 0; }
+.vector-cell { padding: 1rem .25rem; text-align: center; border: 1px solid var(--color-rule); background: var(--color-paper); }
+.vector-cell span, .thread-cell span { display: block; }
+.vector-cell.done { border-color: var(--color-green); background: var(--color-paper-3); }
+.warp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-block: 1rem; }
+.warp-box { border: 2px solid var(--color-rule); padding: .5rem; }
+.warp-box.selected { border-color: var(--color-accent); }
+.warp-box h4 { margin: .25rem 0 .75rem; font-size: .9rem; }
+.thread-cells { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: .25rem; }
+.warp-box .thread-cells { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.thread-cell { text-align: center; padding: .4rem .1rem; font: .75rem/1.7 var(--font-mono); background: var(--color-paper); border: 1px solid var(--color-rule); }
+.thread-cell.active { color: var(--color-paper); background: var(--color-ink); }
+.thread-cell.inactive { border-style: dashed; color: var(--color-muted); }
+.supplement figcaption, .model-note, .supplement footer { font-size: .85rem; line-height: 1.8; color: var(--color-muted); }
+.supplement figcaption { margin-top: 1rem; }
+.supplement pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; }
+.summary-table { overflow-x: auto; }
+.summary-table table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.summary-table th, .summary-table td { padding: .8rem .5rem; text-align: left; border-bottom: 1px solid var(--color-rule); }
+.summary-table caption { text-align: left; padding-block: .75rem; font-weight: 700; }
+.supplement h3[id] { scroll-margin-top: 9rem; }
+.supplement details { margin-block: 1.5rem; }
+.supplement button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 600px) { .warp-pair { grid-template-columns: 1fr; } .thread-cells { grid-template-columns: repeat(4, minmax(0, 1fr)); } .experiment { padding: .75rem; } .supplement .topbar { font-size: .8rem; } }

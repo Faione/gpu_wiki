@@ -1,0 +1,47 @@
+.learning-figure { margin: 1.5rem 0; padding: 1.25rem; background: var(--color-paper-2); color: var(--color-ink); border: 1px solid var(--color-rule); }
+.learning-figure figcaption { margin-top: 1rem; font-size: .85rem; line-height: 1.7; color: var(--color-muted); }
+.learning-figure h4 { margin: 0 0 1rem; }
+.learning-figure .mapping-controls { margin: 0 0 1rem; }
+.learning-figure .flow-row { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: .6rem; margin: .75rem 0; }
+.learning-figure .flow-node { padding: .8rem; background: var(--color-paper); border: 1px solid var(--color-rule-2); text-align: center; line-height: 1.7; min-width: 0; }
+.learning-figure .flow-node small { display: block; font-size: .8rem; }
+.learning-figure .waiting { border-style: dashed; }
+.learning-figure .ready { border-left: 4px solid var(--color-green); }
+.learning-figure .control-bus { border: 2px solid var(--color-blue); padding: .8rem; text-align: center; }
+.learning-figure .control-feed { color: var(--color-blue); text-align: center; margin: .75rem 0; font-size: .85rem; }
+.learning-figure .data-channel { border-left: 4px solid var(--color-accent); padding-left: .75rem; }
+.learning-figure .table-scroll { overflow-x: auto; }
+.learning-figure table { width: 100%; border-collapse: collapse; font-size: .9rem; line-height: 1.6; }
+.learning-figure th, .learning-figure td { padding: .7rem; border: 1px solid var(--color-rule); text-align: left; }
+.learning-figure th { background: var(--color-paper); }
+.learning-figure .timeline { min-width: 610px; table-layout: fixed; }
+.learning-figure .timeline th, .learning-figure .timeline td { text-align: center; padding: .65rem .25rem; }
+.learning-figure .timeline th:first-child { width: 7rem; }
+.learning-figure .issued { background: var(--color-ink); color: var(--color-paper); }
+.learning-figure .pending { background: var(--color-paper-3); border-bottom: 3px dashed var(--color-wait); }
+.learning-figure .idle { color: var(--color-muted); }
+.warp-circuit-scroll { overflow-x: auto; }
+.warp-circuit-svg { display: block; width: 100%; min-width: 680px; height: auto; }
+.warp-circuit-svg text { fill: var(--color-ink); font: 15px var(--font-body); text-anchor: middle; }
+.warp-circuit-svg .warp-data { fill: var(--color-paper); stroke: var(--color-rule-2); }
+.warp-circuit-svg .warp-alu { fill: var(--color-paper); stroke: var(--color-accent); stroke-width: 2; }
+.warp-circuit-svg .warp-wire { fill: none; stroke: var(--color-ink); stroke-width: 1.5; }
+.warp-circuit-svg .warp-control { fill: none; stroke: var(--color-blue); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.learning-figure .diagram-title { display: block; margin-bottom: 1rem; font-weight: 700; }
+.learning-figure .diagram-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.learning-figure .diagram-box { border: 1px solid var(--color-rule-2); padding: 1rem; background: var(--color-paper); min-width: 0; }
+.learning-figure .diagram-box strong, .learning-figure .diagram-box small { display: block; }
+.learning-figure .diagram-box small { margin-top: .4rem; line-height: 1.7; }
+.learning-figure .diagram-box .diagram-box { margin-top: .75rem; }
+.learning-figure .diagram-link { text-align: center; margin: .65rem 0; font-size: .9rem; line-height: 1.6; }
+.learning-figure .diagram-state { border-left: 4px solid var(--color-blue); }
+.learning-figure .diagram-exec { border-left: 4px solid var(--color-accent); }
+.learning-figure .diagram-box[data-selected="true"] { outline: 2px solid var(--color-green); outline-offset: 2px; }
+.learning-figure .diagram-caption { font-size: .9rem; line-height: 1.7; }
+@media (max-width: 600px) { .learning-figure .diagram-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+ .learning-figure { padding: .8rem; }
+ .learning-figure .flow-row { grid-template-columns: 1fr; gap: .3rem; }
+ .learning-figure .flow-arrow { transform: rotate(90deg); text-align: center; }
+ .learning-figure .comparison { min-width: 490px; }
+}
