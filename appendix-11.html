@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 11：Warp 发射与分支分歧 · GPU 架构实验室</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="simd-warp.css"><link rel="stylesheet" href="learning-figures.css"><link rel="stylesheet" href="reading-nav.css">
+<script src="simd-warp.js" defer></script><script src="site-map.js" defer></script><script src="reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="mechanism"><h2>附录 11：Warp 发射与分支分歧</h2><h3 id="warp-issue-model">附11.1 线程状态与成组发射</h3><p>在 NVIDIA GPU 中，一个 Warp（线程束）包含同一 Block 内连续编号的 32 个线程。它们保留各自的数据状态，但在执行共同指令时共享发射。这样，控制与发射开销可以由多份数据运算分摊。</p><p>以下 Block 有 64 个线程，因而分成 W0 与 W1。示例中每个线程依次计算 <code>r = x + 1</code> 和 <code>y = r × 2</code>，且初值 <code>x = 线程编号</code>。选择一个 Warp 并发射下一条指令，可观察哪些线程的状态发生变化。</p>
+  <figure class="experiment"><div class="mapping-controls" role="group" aria-label="选择发射的 Warp"><button data-warp="0" aria-pressed="true">W0 · T0–T31</button><button data-warp="1" aria-pressed="false">W1 · T32–T63</button><button id="warp-step">发射下一条指令</button><button id="warp-reset">重置</button></div><p class="instruction" id="warp-instruction"></p><div class="warp-pair" id="warp-grid"></div><figcaption id="warp-status" aria-live="polite"></figcaption></figure>
+  <p>例如，W0 执行加法时，T0 得到 <code>r = 1</code>，T1 得到 <code>r = 2</code>。它们执行同一条加法指令，但读取和写入各自的寄存器。W1 的状态此时保持不变；两个 Warp 的执行进度可以不同。</p><p class="key-insight">Warp 是线程的执行分组，SM 才是提供调度与运算资源的硬件。32 个逻辑线程不意味着独占 32 个物理算术单元，也不保证每条指令在一个周期内完成。</p><p class="model-note">本实验将发射与结果完成合并为一个可视步骤，并假设操作数及执行资源已就绪。实际调度由硬件决定，指令的延迟、吞吐与所用执行管线取决于架构和指令类型。</p>
+
+  <h3 id="warp-divergence">附11.2 分支路径与活跃掩码</h3><p>共同发射要求本次参与的线程执行同一条指令。当线程选择不同路径时，可分别执行各路径的指令，并用活跃掩码标记本次参与的线程。Warp 的成员编号保持不变。</p>
+  <figure class="experiment"><pre>if (i &lt; 16) y = x + 1;   // 路径 A
+else        y = x * 2;   // 路径 B</pre><div class="mapping-controls" role="group" aria-label="查看分支路径"><button data-path="A" aria-pressed="true">执行路径 A</button><button data-path="B" aria-pressed="false">执行路径 B</button></div><p class="instruction" id="mask-instruction"></p><div class="thread-cells" id="mask-grid"></div><figcaption id="mask-status" aria-live="polite"></figcaption></figure>
+  <p>这解释了分支分歧（divergence）的代价：某条路径的指令仍需执行，但只有部分线程参与，能够利用的逻辑 lane 比例降低。路径越不一致，成组执行的收益通常越受限制。</p><details><summary>实际执行与同步的进一步说明</summary><p>图中用两次带掩码的操作说明语义，不模拟编译器生成的指令；短分支也可能采用谓词化。现代 NVIDIA GPU 支持独立线程调度，不能假定 Warp 内所有线程始终严格同步前进。线程间交换数据仍应使用与通信范围相符的同步机制。</p></details>
+
+</section></main></body></html>

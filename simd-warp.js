@@ -1,7 +1,7 @@
 'use strict';
 const el = id => document.getElementById(id);
-let mode = 'scalar', count = 0, selectedWarp = 0;
-const stages = [0, 0];
+(() => { if (!el('vector-grid')) return;
+let mode = 'scalar', count = 0;
 function renderVector() {
   const done = mode === 'simd' && count ? 4 : count;
   el('vector-instruction').textContent = done === 4 ? '四个结果均已得到' : mode === 'scalar' ? `下一条：y[${count}] = x[${count}] + 1` : '下一条：Y[0:3] = X[0:3] + [1, 1, 1, 1]';
@@ -16,6 +16,10 @@ document.querySelectorAll('[data-mode]').forEach(button => button.addEventListen
 }));
 el('vector-step').addEventListener('click', () => { if (count < (mode === 'simd' ? 1 : 4)) count++; renderVector(); });
 el('vector-reset').addEventListener('click', () => { count = 0; renderVector(); });
+
+renderVector(); })();
+(() => { if (!el('warp-grid')) return;
+let selectedWarp = 0; const stages = [0, 0];
 function renderWarps(message = '选择 Warp 后发射指令，可比较两组线程的独立进度。') {
   el('warp-grid').innerHTML = stages.map((stage, w) => `<div class="warp-box ${w === selectedWarp ? 'selected' : ''}"><h4>W${w} · ${['初始状态', '加法已完成', '乘法已完成'][stage]}</h4><div class="thread-cells">${Array.from({length: 32}, (_, lane) => { const t = w * 32 + lane; return `<div class="thread-cell"><span>T${t}</span><span>x=${t}</span><span>r=${stage > 0 ? t + 1 : '—'}</span><span>y=${stage > 1 ? (t + 1) * 2 : '—'}</span></div>`; }).join('')}</div></div>`).join('');
   el('warp-instruction').textContent = `W${selectedWarp}：${['下一条 r = x + 1 · 32 个活跃线程', '下一条 y = r × 2 · 32 个活跃线程', '两条指令均已完成'][stages[selectedWarp]]}`;
@@ -33,6 +37,9 @@ el('warp-step').addEventListener('click', () => {
   renderWarps(`W${selectedWarp} 的 32 个线程各自完成${stages[selectedWarp] === 1 ? '加法' : '乘法'}；W${1 - selectedWarp} 的状态未改变。这是一次教学步骤，不代表一个时钟周期。`);
 });
 el('warp-reset').addEventListener('click', () => { stages.fill(0); renderWarps(); });
+
+renderWarps(); })();
+(() => { if (!el('mask-grid')) return;
 function renderMask(path) {
   el('mask-instruction').textContent = `W0 · 路径 ${path} · ${path === 'A' ? 'y = x + 1' : 'y = x × 2'}`;
   el('mask-grid').innerHTML = Array.from({length: 32}, (_, i) => { const active = path === 'A' ? i < 16 : i >= 16; return `<div class="thread-cell ${active ? 'active' : 'inactive'}"><span>T${i}</span><span>${active ? '参与' : '不参与'}</span></div>`; }).join('');
@@ -42,4 +49,5 @@ document.querySelectorAll('[data-path]').forEach(button => button.addEventListen
   document.querySelectorAll('[data-path]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
   renderMask(button.dataset.path);
 }));
-renderVector(); renderWarps(); renderMask('A');
+
+renderMask('A'); })();

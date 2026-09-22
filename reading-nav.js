@@ -2,7 +2,12 @@
   'use strict';
   const header = document.querySelector('.topbar');
   if (!header) return;
-  const supplement = document.body.classList.contains('supplement');
+  const currentPage = location.pathname.split('/').pop();
+  const book = window.GPU_BOOK || [];
+  const pageIndex = book.findIndex(item => item.page === currentPage);
+  if (pageIndex < 0) return;
+  const page = book[pageIndex];
+  const supplement = page.group === '附录';
   const sections = [...document.querySelectorAll('main section[id]')];
   const entries = [];
   sections.forEach((section, i) => {
@@ -41,98 +46,32 @@
     a.textContent = title; a.href = href; li.append(a); list.append(li);
     return li;
   };
-  const appendixCatalog = [
-  {
-    "page": "index.html",
-    "id": "thread-instance",
-    "title": "附录 1：线程与执行状态"
-  },
-  {
-    "page": "index.html",
-    "id": "thread-to-sm",
-    "title": "附录 2：Block 与 Warp 的分工"
-  },
-  {
-    "page": "index.html",
-    "id": "appendix-execution",
-    "title": "附录 3：成组执行与硬件多线程"
-  },
-  {
-    "page": "index.html",
-    "id": "appendix-configuration",
-    "title": "附录 4：线程配置、编号与设计依据"
-  },
-  {
-    "page": "index.html",
-    "id": "appendix-allocation",
-    "title": "附录 5：SM 的组成与资源分配"
-  },
-  {
-    "page": "index.html",
-    "id": "appendix-residency",
-    "title": "附录 6：驻留、状态保留与调度"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "question",
-    "title": "附录 7：SIMD 与 SIMT 编程模型"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "kernel-basics",
-    "title": "附录 8：Kernel 的定义与启动"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "background",
-    "title": "附录 9：SIMD：向量、lane 与向量化"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "simt",
-    "title": "附录 10：SIMT：线程行为与成组执行"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "mechanism",
-    "title": "附录 11：Warp 发射与分支分歧"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "comparison",
-    "title": "附录 12：SIMD 与 SIMT 的差异及适用条件"
-  },
-  {
-    "page": "simd-warp.html",
-    "id": "conclusion",
-    "title": "附录 13：并行执行概念辨析"
-  }
-];
-  const currentPage = supplement ? 'simd-warp.html' : 'index.html';
-  const appendixSlots = new Map();
-  if (supplement) addPage(mainList, '第一章：从 CPU 到 GPU', 'index.html#top');
-  appendixCatalog.forEach(item => {
-    const li = addPage(appendixList, item.title, item.page === currentPage ? '#' + item.id : item.page + '#' + item.id);
-    appendixSlots.set(item.id, li);
+  addPage(mainList, '学习目录首页', 'index.html');
+  const slots = new Map();
+  let pageLink;
+  book.forEach(item => {
+    const li = addPage(item.group === '附录' ? appendixList : mainList, item.title, item.page + '#' + item.id);
+    if (item.page === currentPage) {
+      pageLink = li.querySelector('a');
+      const list = document.createElement('ol'); list.className = 'reading-children'; li.append(list);
+      slots.set(item.page, list);
+    }
   });
-  let childList = mainList;
+  const pageList = slots.get(currentPage);
+  let childList = pageList;
   const links = entries.map(entry => {
-    const li = !entry.sub && entry.appendix ? appendixSlots.get(entry.node.id) : document.createElement('li');
-    const a = li.querySelector('a') || document.createElement('a');
-    a.href = '#' + entry.node.id;
-    a.textContent = entry.title;
+    // An appendix has a single chapter heading, already represented by its page link.
+    if (supplement && !entry.sub) return pageLink;
+    const li = document.createElement('li'), a = document.createElement('a');
+    a.href = '#' + entry.node.id; a.textContent = entry.title;
     a.addEventListener('click', () => {
-      dialog.close();
-      entry.node.tabIndex = -1;
-      entry.node.focus({ preventScroll: true });
+      dialog.close(); entry.node.tabIndex = -1; entry.node.focus({ preventScroll: true });
     });
-    if (!a.parentElement) li.append(a);
+    li.append(a);
     if (entry.sub) childList.append(li);
     else {
-      if (!entry.appendix) mainList.append(li);
-      childList = document.createElement('ol');
-      childList.className = 'reading-children';
-      li.append(childList);
+      pageList.append(li);
+      childList = document.createElement('ol'); childList.className = 'reading-children'; li.append(childList);
     }
     return a;
   });
@@ -162,18 +101,15 @@
     bar.querySelector('.reading-current').textContent = current.title;
     let sectionIndex = 0;
     mainEntries.forEach((entry, i) => { if (entry.node.getBoundingClientRect().top <= threshold) sectionIndex = i; });
-    const sectionEntry = mainEntries[sectionIndex];
-    const appendixIndex = sectionEntry.appendix ? appendixCatalog.findIndex(item => item.id === sectionEntry.node.id) : -1;
     [['.reading-prev', -1], ['.reading-next', 1]].forEach(([selector, direction]) => {
       const a = bar.querySelector(selector);
+      const neighbor = mainEntries[sectionIndex + direction];
       let target;
-      if (appendixIndex >= 0) {
-        const item = appendixCatalog[appendixIndex + direction];
-        if (item) target = { title: item.title, href: item.page === currentPage ? '#' + item.id : item.page + '#' + item.id };
-        else if (direction < 0) target = { title: '返回正文', href: 'index.html#check' };
-      } else {
-        const item = mainEntries[sectionIndex + direction];
-        if (item) target = { title: item.title, href: '#' + item.node.id };
+      if (neighbor) target = { title: neighbor.title, href: '#' + neighbor.node.id };
+      else {
+        const other = book[pageIndex + direction];
+        if (other) target = { title: other.title, href: other.page + '#' + other.id };
+        else if (direction < 0) target = { title: '学习目录首页', href: 'index.html' };
       }
       a.setAttribute('aria-disabled', String(!target));
       if (target) { a.href = target.href; a.removeAttribute('tabindex'); a.title = target.title; }

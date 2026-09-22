@@ -1,0 +1,10 @@
+.gemm-controls { display:flex; flex-wrap:wrap; gap:.75rem; align-items:center; margin:1rem 0; }
+.gemm-controls label { display:flex; gap:.4rem; align-items:center; }
+.gemm-controls select, .gemm-controls button, .gemm-output-grid button { font:inherit; color:var(--color-ink); background:var(--color-paper); border:1px solid var(--color-rule); padding:.5rem .7rem; }
+.gemm-output-grid { display:grid; gap:.4rem; margin:1rem 0; }
+.gemm-output-grid button { min-width:0; overflow-wrap:anywhere; font-size:.85rem; text-align:left; }
+.gemm-output-grid button[aria-pressed="true"] { border:2px solid var(--color-green); background:var(--color-paper-3); font-weight:700; }
+.gemm-output-grid button:focus-visible, .gemm-controls :focus-visible { outline:3px solid var(--color-blue); outline-offset:2px; }
+.gemm-controls button:disabled { opacity:.45; cursor:default; }
+#gemm-budget { border-left:3px solid var(--color-green); padding-left:.8rem; }
+@media(max-width:480px) { .gemm-output-grid button { padding:.4rem .2rem; font-size:.75rem; } }

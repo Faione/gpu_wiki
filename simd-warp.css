@@ -34,3 +34,7 @@
 .supplement details { margin-block: 1.5rem; }
 .supplement button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 600px) { .warp-pair { grid-template-columns: 1fr; } .thread-cells { grid-template-columns: repeat(4, minmax(0, 1fr)); } .experiment { padding: .75rem; } .supplement .topbar { font-size: .8rem; } }
+.book-index { list-style: none; padding-left: 0; }
+.book-index li { margin: .65rem 0; }
+#chapters > ol { list-style: none; padding-left: 0; }
+#chapters > ol li { margin: .65rem 0; }

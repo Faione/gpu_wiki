@@ -14,9 +14,12 @@
 .learning-figure table { width: 100%; border-collapse: collapse; font-size: .9rem; line-height: 1.6; }
 .learning-figure th, .learning-figure td { padding: .7rem; border: 1px solid var(--color-rule); text-align: left; }
 .learning-figure th { background: var(--color-paper); }
-.learning-figure .timeline { min-width: 610px; table-layout: fixed; }
-.learning-figure .timeline th, .learning-figure .timeline td { text-align: center; padding: .65rem .25rem; }
-.learning-figure .timeline th:first-child { width: 7rem; }
+/* Keep the semantic table separate from the grid-based experiment timeline. */
+.learning-figure .load-overlap-timeline { display: table; min-width: 680px; table-layout: fixed; }
+.learning-figure .load-overlap-timeline th, .learning-figure .load-overlap-timeline td { text-align: center; vertical-align: middle; padding: .85rem .5rem; line-height: 1.8; }
+.learning-figure .load-overlap-timeline th:first-child { width: 5rem; }
+#load-overlap-figure { min-width: 0; max-width: 100%; }
+#load-overlap-figure .table-scroll { max-width: 100%; padding-bottom: .35rem; }
 .learning-figure .issued { background: var(--color-ink); color: var(--color-paper); }
 .learning-figure .pending { background: var(--color-paper-3); border-bottom: 3px dashed var(--color-wait); }
 .learning-figure .idle { color: var(--color-muted); }
@@ -45,3 +48,9 @@
  .learning-figure .flow-arrow { transform: rotate(90deg); text-align: center; }
  .learning-figure .comparison { min-width: 490px; }
 }
+.sm-work-map .sm-map-label { display: block; margin: .8rem 0; font-weight: 600; }
+.sm-work-map .sm-logical { border: 2px dashed var(--color-rule); }
+.sm-work-map .sm-warp { margin-top: .6rem; padding: .55rem; border-left: 3px solid var(--color-blue); background: var(--color-paper-3); }
+.sm-work-map .sm-physical { border: 2px solid var(--color-ink); padding: 1rem; }
+.sm-work-map .sm-physical > .sm-map-label { margin-top: 0; }
+.sm-work-map .diagram-grid > * { min-width: 0; }

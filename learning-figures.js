@@ -30,6 +30,15 @@
     const index = Number(button.dataset.residentStep);
     buttons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
     selectors.forEach((selector, i) => { figure.querySelector(selector).textContent = stages[index][i]; });
+    const get = id => document.getElementById(id);
+    if (get('resident-w0-values')) {
+      get('resident-w0-values').textContent = index === 2 ? 'R0 = 2；R1 = 1（加载已就绪）' : 'R0 = 等待；R1 = 1';
+      get('resident-load-values').textContent = index === 2 ? '加载结果 2 → W0.R0' : '加载请求尚未返回';
+      get('resident-alu-values').textContent = index === 1 ? '本次取 W1：7 + 3' : '本快照未指定发射';
+      get('resident-w1-box').classList.toggle('dv-active', index === 1);
+      get('resident-read-wire').classList.toggle('dv-muted', index !== 1);
+      get('resident-load-wire').classList.toggle('dv-muted', index !== 2);
+    }
     figure.querySelectorAll('[data-warp-state]').forEach(node => {
       node.dataset.selected = String(index === 1 && node.dataset.warpState === '1');
     });

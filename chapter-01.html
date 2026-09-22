@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="从 CPU 出发建立 GPU 体系结构总体模型的交互式学习实验室">
+  <title>GPU 架构实验室 · 第一章</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="review-questions.css">
+  <script src="review-questions.js" defer></script>
+  <link rel="stylesheet" href="learning-figures.css?v=2">
+  <script src="learning-figures.js" defer></script>
+  <link rel="stylesheet" href="reading-nav.css">
+  <script src="site-map.js" defer></script><script src="reading-nav.js" defer></script>
+<script src="chapter-migrations.js" defer></script><link rel="stylesheet" href="concept-diagrams.css"></head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="返回学习目录"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a>
+    <button class="search-pill" id="search-open" aria-label="打开章节导航">
+      <span aria-hidden="true">⌕</span><span class="search-label">跳转到概念…</span><kbd>⌘ K</kbd>
+    </button>
+    <div class="progress-wrap" aria-label="阅读进度"><span id="progress"></span></div>
+  </header>
+
+  <dialog class="command" id="command-dialog" aria-labelledby="command-title">
+    <form method="dialog" class="command-shell">
+      <div class="command-input-row">
+        <span aria-hidden="true">⌕</span>
+        <label class="sr-only" for="command-input" id="command-title">搜索本章</label>
+        <input id="command-input" autocomplete="off" placeholder="输入 latency、warp 或 divergence">
+        <button class="icon-button" value="close" aria-label="关闭">×</button>
+      </div>
+      <div class="command-results" id="command-results" role="listbox"></div>
+    </form>
+  </dialog>
+
+  <main id="top">
+    <section class="intro shell">
+      <p class="chapter-label">第一章 · 从 CPU 到 GPU：建立总体模型</p>
+      <div class="intro-grid">
+        <div>
+<h1>GPU 的并行执行<br>与延迟隐藏</h1>
+<p class="lede">本章以数组计算 <code>y[i] = 2 × x[i] + 1</code> 为例，在 CPU 体系结构知识的基础上，依次讨论任务独立性、延迟隐藏机制与 GPU 的硬件组织。</p>
+        </div>
+        <aside class="thesis">
+          <span>本章核心命题</span>
+          <strong>独立工作的交叠执行<br>可以覆盖等待时间。</strong>
+          <a href="chapter-01.html#tradeoff">开始实验 ↓</a>
+        </aside>
+      </div>
+<nav class="learning-route" aria-label="学习路线"><a href="chapter-01.html#tradeoff">1.1 并行与性能目标</a><a href="chapter-01.html#cpu-latency">1.2 数据依赖与停顿</a><a href="chapter-01.html#cpu-to-gpu-bridge">1.3 从独立指令到多线程执行</a><a href="chapter-01.html#gpu-latency">1.4 线程调度与延迟隐藏</a><a href="chapter-01.html#simt">1.5 成组执行的代价</a><a href="chapter-01.html#overview">1.6 推导硬件结构</a><a href="index.html#appendices">按主题查附录</a></nav>
+      <p class="reading-guide">本章读完应能解释：工作怎样分成 Block 与 Warp，SM 如何承载它们，哪些等待可以由其他工作覆盖。CPU 机制仅作连接，不作为重学目标。</p>
+    </section>
+
+    <section class="lesson shell" id="tradeoff" data-title="CPU 与 GPU 的设计目标" data-keywords="latency throughput ilp tlp dlp cpu gpu">
+<header class="lesson-head"><p>第一步 / 区分目标</p><h2>1.1 单任务延迟与整体吞吐量</h2><p>数组元素之间不存在数据依赖时，不同元素的计算可以并发执行。任务独立性是本例能够利用并行资源的前提。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>为什么单个任务完成较慢的处理器，仍可能更早完成整批任务？CPU 与 GPU 的资源配置差异应当用哪些性能指标解释？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<div class="definition-grid">
+        <article><h3>Latency-oriented</h3><p>优化单个任务从开始到完成的时间。典型 CPU 会用复杂控制逻辑、较大的缓存和推测机制减少单线程停顿。</p></article>
+        <article><h3>Throughput-oriented</h3><p>优化单位时间完成的总工作量。典型 GPU 把更多预算交给并行算术与线程状态，以容纳大量并发工作。</p></article>
+        <article><h3>三种并行性</h3><dl><div><dt>ILP</dt><dd>一条指令流内，互不依赖的指令重叠执行。</dd></div><div><dt>TLP</dt><dd>多个线程或线程束并发推进。</dd></div><div><dt>DLP</dt><dd>同一种操作作用于许多数据元素。</dd></div></dl></article>
+      </div><p>本章数组计算的不同元素互不依赖，因而可以同时分配给多个执行资源。面积和功耗有限，使得每个执行资源的能力与可配置数量之间存在取舍。</p><details class="guided-example"><summary>数组计算中的三种并行性</summary><p>同一个线程提前加载多个互不依赖的 x[i]，使独立指令重叠执行，是 ILP（指令级并行）。将不同 i 分配给不同线程，是 TLP（线程级并行）。对多个 x[i] 执行相同的乘加运算，体现 DLP（数据级并行）。三者可以同时存在。</p></details>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<div class="guided-example"><h3>独立任务的执行时间对比</h3><p>16 个独立任务。机器 A 有 1 个执行资源，每任务耗时 2；机器 B 有 4 个资源，每任务耗时 4。时间单位任意，忽略启动、访存、流水线和争用。</p><div class="example-comparison"><p><strong>A：首个结果 t = 2</strong><br>整批完成 t = 32<br>吞吐量 0.5 个任务 / 时间单位</p><p><strong>B：首批结果 t = 4</strong><br>整批完成 t = 16<br>吞吐量 1 个任务 / 时间单位</p></div><details><summary>任务间存在顺序依赖时的结果</summary><p>若每项任务均依赖前一项的完成结果，B 同时只能使用一个执行资源：A 总耗时 32，B 总耗时 64。硬件并行需要程序提供独立工作。本例只区分指标，不预测 CPU/GPU 性能。</p></details></div><p>缓存影响数据何时返回，调度影响等待期间还能做什么。两者都可能改善资源利用率，不能从“缓存多”直接推导“吞吐低”。预算取舍的详细推导见 <a href="appendix-18.html#control-cache">附录 18</a>。</p></div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<ul><li>Latency 衡量单任务完成时间，Throughput 衡量单位时间完成的工作量；较高吞吐量不要求每个任务的延迟都更低。</li><li>控制与缓存可通过减少有效停顿改善执行时间；算术资源数量影响运算能力上限。资源投入不直接等于性能。</li><li>实际收益受任务独立性、数据局部性、带宽及有效利用率约束。CPU 与 GPU 都利用多种并行性，区别在于设计重心。</li></ul>
+</div><p class="lesson-bridge">任务独立性并不能保证执行单元持续运行；操作数未就绪时，依赖指令仍会停顿。下一节讨论 CPU 对这类停顿的处理机制。 <a href="chapter-01.html#cpu-latency">继续 →</a></p>
+</section>
+
+    <section class="lesson shell" id="cpu-latency" data-title="CPU 如何隐藏 latency" data-keywords="ooo speculation branch prediction cache smt cpu">
+<header class="lesson-head"><p>第二步 / 分析停顿原因</p><h2>1.2 执行资源可用性与指令就绪条件</h2><p>乘法依赖 x[i] 的加载结果。执行资源空闲并不意味着存在满足发射条件的指令。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>当乘法单元空闲时，处理器为什么仍不能执行 <code>y[i] = 2 × x[i] + 1</code>？若计算资源已经存在，增加同类资源能否解决这个停顿？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<p>执行指令需要同时满足操作数、依赖关系和硬件资源等条件。这里重点讨论真实数据依赖：一条指令必须获得前序指令产生的值，才能计算正确结果。资源空闲只满足其中一个条件。</p><figure class="learning-figure" id="dependency-figure">
+<h4>图 1.2 · 数据依赖与独立指令</h4>
+<div class="mapping-controls" role="group" aria-label="加载结果状态"><button type="button" data-load-ready="false" aria-pressed="true">x 尚未返回</button><button type="button" data-load-ready="true" aria-pressed="false">x 已返回</button></div>
+<div class="flow-row"><div class="flow-node">加载 x<small data-load-state>等待数据</small></div><span class="flow-arrow" aria-hidden="true">→</span><div class="flow-node waiting" data-multiply-node>r = x × 2<small data-multiply-state>缺少 x，暂不能执行</small></div><span class="flow-arrow" aria-hidden="true">→</span><div class="flow-node waiting">y = r + 1<small>等待乘法结果</small></div></div>
+<div class="flow-node ready">独立指令：z = a + b<small>a、b 已就绪，不依赖上述链条</small></div>
+<p data-dependency-note aria-live="polite">乘法虽可能有空闲执行资源，但缺少 x，仍须等待；独立的 z = a + b 可参与调度选择。</p>
+<figcaption>箭头表示真实数据依赖，不表示周期。切换仅改变 x 是否可用；假设相应执行资源可用，数据就绪也不保证立刻被选中。计算完成后还需存储结果，本图省略该步骤。</figcaption>
+</figure><p>在上述链条中，加载结果未返回时，乘法的源操作数不可用；乘法未完成时，加法也无法获得其结果。同一时刻，另一条 <code>z = a + b</code> 若操作数已就绪且不依赖 x[i]，则可能具备执行条件。</p>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<p>停顿的直接原因是缺少满足执行条件的指令。处理器可以缩短条件尚未满足的时间，也可以在这段时间执行其他独立指令。控制路径未确定时，还可以通过预测与推测提前推进取指和执行。</p><p>缓存可缩短数据等待；乱序执行利用同线程的独立指令；SMT 引入其他线程的候选指令。它们都不消除真实数据依赖。GPU 接下来扩展的是可驻留、可调度的工作来源。</p><p>CPU 的 OoO、SMT、缓存与推测执行可组合使用。机制对照实验见 <a href="appendix-18.html#cpu-mechanisms">附录 18.2</a>；这里保留“依赖就绪与资源可用必须同时满足”这一前提。</p><details class="guided-example"><summary>OoO 与 SMT 可以共同工作</summary><p>OoO 增加指令执行安排的灵活性，SMT 增加指令的线程来源。二者可以同时存在，不是先使用 OoO、失败后才切换到 SMT；最终能否执行仍取决于依赖、就绪状态和共享资源。</p></details>
+</div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<ul><li>执行资源空闲是指令可执行的必要条件之一，操作数就绪与依赖满足同样重要。</li><li>Cache 缩短部分访问等待；OoO 用同线程独立指令覆盖等待；SMT 从其他硬件线程补充候选指令。</li><li>分支预测与推测执行处理控制路径的不确定性。所有机制都有适用条件，其收益取决于程序能够提供的独立工作。</li></ul>
+</div>
+<p class="lesson-bridge">独立指令的来源可以扩展到多个线程。下一节先讨论这些工作的组织方式，再引入具体 GPU 结构。 <a href="chapter-01.html#cpu-to-gpu-bridge">进入 1.3 →</a></p>
+</section>
+
+<section class="lesson shell" id="cpu-to-gpu-bridge" data-title="1.3 从独立指令到多线程执行" data-keywords="过渡 cpu gpu SMT 独立工作 线程 成组执行">
+<header class="lesson-head"><p>第三步 / 从通用原理推导执行组织</p><h2>1.3 从独立指令到多线程执行</h2><p>本节从程序中的独立工作出发，说明保存线程状态与成组发射的理由，为下一节的 GPU 调度机制建立前提。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>单个线程中的独立指令有限，而程序还包含大量互不依赖的任务时，硬件如何获得更多可执行工作？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<p>上述机制围绕同一个问题：当前指令等待时，还有哪些工作可以执行？OoO 在同一线程中寻找独立指令，SMT 将来源扩展到其他线程。下一步讨论的不是另一套依赖规则，而是当独立工作很多时，如何组织这些工作。</p>
+<p><strong>独立工作来自程序。</strong>对于数组计算，单个元素内部仍有“加载 → 乘法 → 加法”的依赖，但不同元素之间没有这种依赖。可以让多个线程分别处理不同元素：线程 T0 等待 x[0] 时，T1 仍可能发出自己的加载，或计算已经返回的数据。创建线程是在表达已有的独立性，并不能消除原有依赖。</p>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<p><strong>交替推进需要保留状态。</strong>硬件若要在许多线程之间选择工作，就需要保留它们的数据和执行进度，使某个线程等待时，其他线程能够继续。这与 SMT 的基本思路相通；对于大量独立任务，面向吞吐量的设计更重视可同时保留的线程状态规模。</p>
+<figure class="learning-figure" id="state-selection-example"><h4>图 1.3-1 · 切换操作数来源，不搬走等待者的状态</h4><div class="visual-scroll" tabindex="0" role="region" aria-label="配图，可横向滚动"><svg class="visual-diagram" viewBox="0 0 900 400" role="img" aria-labelledby="state-selection-example-title state-selection-example-desc"><title id="state-selection-example-title">图 1.3-1 · 切换操作数来源，不搬走等待者的状态</title><desc id="state-selection-example-desc">高亮表示本次使用 B 的操作数。状态记录与运算单元在图上分离，返回箭头只更新 B。用于说明硬件多线程的基本机制，不规定 CPU/GPU 的发射粒度、寄存器布局或时序。</desc><defs><marker id="state-selection-example-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" class="dv-data-arrow"/></marker><marker id="state-selection-example-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" class="dv-control-arrow"/></marker></defs><rect x="35" y="35" width="360" height="180" class="dv-space"/><text x="60" y="65" class="">片上保留的状态（各取一个线程）</text><rect x="60" y="90" width="310" height="45" class="dv-store"/><text x="215" y="118.5" class="dv-center">A：R0 等待加载，R1=1</text><rect x="60" y="150" width="310" height="45" class="dv-active"/><text x="215" y="178.5" class="dv-center">B：R0=7，R1=3</text><rect x="540" y="120" width="300" height="90" class="dv-unit"/><text x="690" y="159" class="dv-center">本次执行 B 的 ADD</text><text x="690" y="183" class="dv-center">7 + 3 = 10</text><path d="M370 172 H540" class="dv-wire" marker-end="url(#state-selection-example-data)"/><path d="M690 210 V280 H205 V195" class="dv-wire" marker-end="url(#state-selection-example-data)"/><text x="375" y="305" class="">结果写回 B 的状态位置</text><text x="60" y="365" class="">A 的 R1=1 仍在原分配位置；没有“先写回显存”的步骤。</text></svg></div><figcaption>高亮表示本次使用 B 的操作数。状态记录与运算单元在图上分离，返回箭头只更新 B。用于说明硬件多线程的基本机制，不规定 CPU/GPU 的发射粒度、寄存器布局或时序。</figcaption></figure>
+<p><strong>大量相同操作适合成组组织。</strong>数组线程通常执行相同操作、处理不同数据。硬件可以让一组线程共享共同指令的发射，以分摊控制开销，同时在不同组之间选择就绪工作。这样，讨论对象便从“一个线程中的候选指令”扩展到了“多个线程组提供的候选指令”。</p>
+<p>在 NVIDIA GPU 中，这种线程执行组称为 Warp，承载其状态、调度与运算资源的硬件组织称为 SM。多个 Warp 可以驻留在同一 SM；具体组成与对应关系见<a href="appendix-05.html#sm-components">附录 5.1</a>及<a href="appendix-05.html#warp-sm-relationship">附5.2</a>。</p>
+<figure class="learning-figure"><h4>表 1.3 · 从指令来源到执行组织</h4><div class="table-scroll"><table class="comparison"><thead><tr><th scope="col">组织方式</th><th scope="col">候选工作来自哪里</th><th scope="col">需要保留什么</th></tr></thead><tbody><tr><th scope="row">同线程乱序执行</th><td>同一线程中不依赖当前等待的指令</td><td>指令窗口内的操作数与依赖状态</td></tr><tr><th scope="row">同时多线程</th><td>同一核心上的多个硬件线程</td><td>多个线程的执行状态</td></tr><tr><th scope="row">GPU 成组多线程执行</th><td>多个线程组的就绪指令</td><td>多组线程状态，以及共同发射所需的控制信息</td></tr></tbody></table></div><figcaption>共同目标是扩大可用工作来源；这些机制可以组合，并非互斥的演进阶段。线程数量增加不直接增加物理运算通道。</figcaption></figure>
+</div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<p class="key-insight">这里得到两个硬件需求：保存多组执行状态，以及从中选择就绪指令。下一节以 NVIDIA GPU 为具体实例，为这些组织引入名称，并观察它们如何覆盖等待。CPU 与 GPU 都可以利用线程级和数据级并行；这是设计侧重点的比较，不是二者的绝对划分。</p>
+</div><p class="lesson-bridge">以下将上述执行组织对应到 GPU，并用时间线观察“某组等待、其他组推进”的过程。 <a href="chapter-01.html#gpu-latency">进入 1.4 →</a></p>
+</section>
+
+    <section class="lesson shell dark-section" id="gpu-latency" data-title="GPU 如何隐藏 latency" data-keywords="resident warp scheduling latency hiding occupancy gpu">
+<header class="lesson-head"><p>第四步 / 扩大调度候选范围</p><h2>1.4 驻留执行组之间的交叠执行</h2><p>上一节由独立工作推导出“保存多组状态、选择就绪指令”的需求。本节以 NVIDIA GPU 为例，说明这种组织如何使不同工作的等待区间交叠。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>当单线程能够提供的独立指令不足以覆盖长延迟时，GPU 如何保持执行资源持续利用？增加线程数量为什么可能有帮助？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<p>在 NVIDIA 的术语中，共同组织指令执行的线程组称为 <strong>Warp</strong>，保存线程状态并提供调度与运算资源的物理单元称为 <strong>SM</strong>。当一组的状态及所需资源已保留在 SM 上，就称为<strong>驻留</strong>。因此，“驻留执行组”在本节具体指驻留的 Warp；这些名称对应的是前节已经引入的执行需求。</p>
+<p>驻留仅说明资源已分配；该组的下一条指令仍须操作数就绪、满足依赖等条件，才能参与发射选择。以下时间线假设各组已经驻留，重点观察它们如何交替发射指令。线程如何组成 Block、如何分配到 SM，以及组内如何共同执行，分别在附录和 1.5 节展开。</p>
+<p><a href="index.html#appendices">附录 1—6：线程、Block、Warp 与 SM</a> · <a href="appendix-06.html#resident-group">驻留执行组与执行状态</a></p>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<div class="guided-example"><h4>1.4.1 两个 warp 的六周期示例</h4>
+<p>假设只有一个发射槽，每周期最多发射一条 warp 指令。W0、W1 均已驻留，各自执行“加载 → 依赖该加载的加法”。加载在周期 t 发出，数据在 t + 4 周期开始时可用。两个加载可同时处于未完成状态。本例忽略带宽竞争和其他指令。</p>
+<figure class="learning-figure" id="load-overlap-figure"><h4>图 1.4 · 两个加载的等待区间交叠</h4><div class="table-scroll" tabindex="0" role="region" aria-label="六周期时间线，可横向滚动"><table class="load-overlap-timeline"><thead><tr><th scope="col">周期</th><th scope="col">1</th><th scope="col">2</th><th scope="col">3</th><th scope="col">4</th><th scope="col">5</th><th scope="col">6</th></tr></thead><tbody><tr><th scope="row">W0</th><td class="issued">发射加载</td><td class="pending">等待数据</td><td class="pending">等待数据</td><td class="pending">等待数据</td><td class="issued">数据可用<br>发射加法</td><td>—</td></tr><tr><th scope="row">W1</th><td>就绪<br>未选择</td><td class="issued">发射加载</td><td class="pending">等待数据</td><td class="pending">等待数据</td><td class="pending">等待数据</td><td class="issued">数据可用<br>发射加法</td></tr><tr><th scope="row">发射槽</th><td>W0 加载</td><td>W1 加载</td><td class="idle">空闲</td><td class="idle">空闲</td><td>W0 加法</td><td>W1 加法</td></tr></tbody></table></div><figcaption>深色格表示发射事件，虚线格表示等待加载结果。两次加载分别在周期 1、2 发出，在周期 5、6 开始时可用，间隔均为 4 周期。— 表示未继续跟踪，不表示加法已经完成。每周期一个发射槽是本例假设。</figcaption></figure>
+<p>W1 的加载在 W0 访存尚未完成时已经发出，两个操作的等待区间发生重叠。即使每周期仅发射一条指令，多条此前发射的操作仍可能同时在不同流水线或存储系统中进行。</p>
+<p>该过程在 6 个周期中使用了 4 个发射槽。两个 warp 只能覆盖部分等待；若存在更多独立且就绪的 warp，周期 3～4 可能被其他指令使用。</p></div>
+<div class="guided-example"><h4>1.4.2 更多线程为何不一定消除空档</h4>
+<p>调度逻辑跟踪指令依赖与资源状态。某组缺少操作数时，其他组只有在自己的下一条指令也符合条件时才可被选中。所有驻留组都等待数据或同步条件时，即使线程数量很大，也可能没有可发射指令。</p>
+<p>增加 warp 数量扩大的是候选集合，而不是每周期的发射槽数。它不能缩短每一次访问，也不能突破存储带宽或算术流水线的容量。</p></div>
+<div class="guided-example"><h4>1.4.3 固定依赖间隔的调度模型</h4>
+<p>上例区分加载与加法。下方实验进一步简化：每个 warp 有持续的待执行工作，每次发射后，其下一条指令都在 L 周期后才允许发射；没有任务完成与退出。它用于单独观察驻留数量与等待间隔的关系，不是数组程序的完整仿真。</p>
+<p>每行是一个 warp，每列是一个周期。● 表示该周期发射，– 表示等待依赖，· 表示就绪但未被选择。空白表示尚未播放到该周期。利用率是已经发射的槽数除以已经观察的周期数，而不是完成的任务比例。</p>
+<p>例如 L = 8 时，周期 1 发射的 W0 在周期 9 最早再次就绪。只有一个 warp 时，周期 2～8 没有候选；8 个初始就绪的 warp 则可以依次填入这些周期。W0 的间隔始终保持为 8 周期。</p></div>
+<details class="guided-example"><summary>24 周期内发射槽利用率的计算</summary><p>模型只有 1 个发射槽 / 周期，所有组初始就绪。L = 8 时，1、4、8 个 warp 分别发射 3、12、24 次，利用率为 12.5%、50%、100%。这一模型不模拟真实指令混合、带宽竞争或多个调度器。100% 仅指本例发射槽无空档，不代表 GPU 达到峰值性能。</p></details>
+<div class="experiment-prompt"><b>实验对照：</b>三个预设固定 L = 8。单组预设显示等待空档，四组预设显示部分覆盖，八组预设显示完全覆盖。“回到周期 0”可从初始状态单步查看；播放过程中每条说明对应一个发射决策。<div class="preset-row"><button data-scenario="1">1 组：存在空档</button><button data-scenario="4">4 组：部分覆盖</button><button data-scenario="8">8 组：完全覆盖</button></div></div><div class="scheduler-grid">
+        <div class="scheduler-controls">
+          <label for="warp-count">Resident warps <output id="warp-output">8</output></label>
+          <input id="warp-count" type="range" min="1" max="16" value="8">
+          <label for="memory-latency">依赖就绪间隔 L（周期） <output id="memory-output">8</output></label>
+          <input id="memory-latency" type="range" min="2" max="16" value="8">
+<button class="run-button" id="run-scheduler"><span class="button-label">逐周期播放</span></button><button class="step-button" id="step-scheduler">前进一步</button><button class="step-button" id="reset-scheduler">回到周期 0</button>
+          <div class="utilization"><span>发射槽利用率</span><strong id="utilization-value">—</strong><div><i id="utilization-bar"></i></div></div>
+        </div>
+        <div>
+          <div class="cycle-ruler" id="cycle-ruler"></div>
+          <div class="warp-lanes" id="warp-lanes"></div>
+<div class="legend"><span>· 就绪未发射</span><span>– 等待依赖</span><span>● 发射</span></div><p id="scheduler-explanation" aria-live="polite"></p>
+        </div>
+      </div><p class="precision inverse">驻留 Warp 的上下文保存在 SM/CU 中，调度器每周期从符合条件的候选指令中选择一部分发射。可驻留数量受寄存器、共享内存、线程块与硬件上限共同约束。</p>
+</div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<ul><li>独立指令不足时，其他线程可以提供额外工作；这是从 CPU SMT 过渡到 GPU 多线程调度的概念联系。</li><li>线程状态描述每个执行实例的进度与数据；驻留意味着相应状态及资源已保留在执行单元上，不意味着独占算术通道。</li><li>Warp 是线程组。Ready 表示指令符合选择条件，Issued 表示获得一次发射机会，发射不等于完成。</li><li>交叠执行让其他组的工作占用部分等待区间，提高资源利用率；原组的延迟可以保持不变。</li><li>候选组必须独立且就绪，收益还受驻留容量、发射能力与数据供给限制。</li></ul>
+<details><summary>练习：等待数据的 Warp 是否仍然驻留？</summary><p>等待数据的 Warp 仍可保持驻留。此时变化的是后续指令的就绪条件，W0 已分配的寄存器等状态仍保留。它可以同时处于“已驻留”和“等待依赖”的状态。</p></details>
+<details><summary>练习：驻留数量是否决定每周期发射数量？</summary><p>驻留数量描述候选组的规模，每周期发射数量还受发射槽数和指令就绪情况限制。若只有一个发射槽，则每周期最多选择其中一组的一条指令；其余组可能等待依赖，也可能已经就绪但未被选中。</p></details>
+<details><summary>练习：交叠执行是否缩短单次加载延迟？</summary><p>本模型中 W0 的加载延迟保持不变，性能改善来自 W1 的工作与 W0 的等待交叠。真实硬件中并发请求还可能造成资源竞争，因此隐藏延迟也不意味着单次访问延迟必然保持不变或下降。</p></details>
+</div><p class="lesson-bridge">成组发射可以分摊控制开销，但组内线程选择不同路径时会产生执行约束。下一节讨论共享指令与分支分歧的关系。 <a href="chapter-01.html#simt">继续 →</a></p>
+</section>
+
+    <section class="lesson shell" id="simt" data-title="SIMD 与 SIMT" data-keywords="simd simt warp wavefront divergence active mask">
+<header class="lesson-head"><p>第五步 / 理解成组执行</p><h2>1.5 共享一条指令，处理不同数据</h2><p>数组计算中的线程执行相同的乘加运算，各自处理不同的 i。共同发射指令能够分摊控制开销，适用于此类数据级并行。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>GPU 为何将大量线程成组发射？同一组线程选择不同分支时，共享指令的执行方式如何保持每个线程的程序语义？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<div class="guided-example"><h3>SIMD 与 SIMT 的语义关系</h3><p>CPU SIMD：向量指令处理 <code>[x0, x1, x2, x3] × 2</code>。GPU SIMT：程序写单个线程的 <code>x[i] × 2</code>，机器将线程分组执行。SIMD 是 Single Instruction, Multiple Data；SIMT 是 Single Instruction, Multiple Threads。SIMD lane 表示向量中的元素位置；Warp lane 表示线程在 Warp 内的位置，两者都不应直接等同于独占的物理运算电路。</p><p>加入 <code>if (x[i] &gt; 0)</code> 后，组内线程可能选择不同路径。Active mask 指定当前路径哪些线程参与，其他线程暂不产生该指令的效果。</p></div><div class="compare-table" role="table" aria-label="SIMD 与 SIMT 对比">
+        <div role="row"><b role="columnheader">观察角度</b><b role="columnheader">CPU SIMD</b><b role="columnheader">GPU SIMT</b></div>
+        <div role="row"><span>程序员看到</span><span>显式向量值与向量指令</span><span>许多标量线程及其私有状态</span></div>
+        <div role="row"><span>硬件组织</span><span>一条指令驱动多个 lane</span><span>线程按 warp / wavefront 分组发射</span></div>
+        <div role="row"><span>控制流</span><span>常用 mask / predicate</span><span>分歧路径按 active mask 执行并再汇合</span></div>
+      </div><p class="precision"><strong>术语：</strong>warp 是 NVIDIA 对 32 个线程执行组的称呼；AMD 称 wavefront，宽度依架构与产品而异。SIMT 不意味着每个线程在每个周期都独立发射不同指令。</p>
+<div id="gpu-simd" data-title="SIMT 与数据并行"><h3>线程语义与数据通路</h3><p>SIMT 保留各线程的状态，共同指令仍可用类似 SIMD 的方式处理多份数据。成组执行不提供额外内存原子性，也不代替线程通信所需的同步。模型差异与写回问题见 <a href="appendix-12.html">附录 12</a>。</p></div>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<p>对于相同操作、不同数据，成组发射可以分摊指令控制开销。当组内存在不同路径时，机器为各路径确定活跃线程集合，使不属于当前路径的线程不产生该路径指令的效果。在本例的简化模型中，A 与 B 分别执行，随后继续共同路径。</p><p class="experiment-prompt"><b>实验问题：</b>半数分歧与交错分歧是否需要不同数量的执行路径？模式切换会更新路径数与 lane-slot 利用率。本例 A、B 各需一条等成本指令，忽略分支与汇合开销。</p><div class="simt-bench">
+        <div class="simt-controls">
+          <div class="segmented" role="group" aria-label="分支模式">
+            <button class="active" data-pattern="uniform">一致分支</button>
+            <button data-pattern="half">半数分歧</button>
+            <button data-pattern="alternating">交错分歧</button>
+            <button data-pattern="random">随机分歧</button>
+          </div>
+          <label for="warp-size">教学组宽度 <select id="warp-size"><option>8</option><option selected>16</option><option>32</option><option>64</option></select></label>
+        </div>
+        <div class="code-branch"><code>if (lane_condition) { A(); } else { B(); }</code></div>
+        <div class="thread-grid" id="thread-grid"></div>
+        <div class="path-row"><div><span>路径 A active mask</span><div id="mask-a" class="mask"></div></div><div><span>路径 B active mask</span><div id="mask-b" class="mask"></div></div></div>
+<div class="divergence-meter"><span>串行路径数 <strong id="path-count">1</strong></span><span>本例 lane-slot 利用率 <strong id="lane-efficiency">100%</strong></span></div><p class="experiment-prompt" id="branch-explanation" aria-live="polite"></p>
+      </div>
+<div class="guided-example" id="predication-basics" data-title="谓词化：给指令附加执行条件"><h3>谓词化：给指令附加执行条件</h3><p>编译器可能将短小的条件分支转换为带条件的指令。例如，<code>if (x &gt; 0) y = x + 1;</code> 可用伪代码表示为 <code>p = (x &gt; 0); @p y = x + 1;</code>。谓词 <code>p</code> 是每个线程各自的真假值：同一 Warp 发射加法时，p 为真的线程更新 y，p 为假的线程保持 y 不变。</p><p>条件跳转决定执行哪条路径；谓词化决定一条指令对哪些线程生效。它可能减少分支控制开销，但指令仍需调度，也不使未参与的线程同时改做其他操作。这是条件执行，不是分支预测。参考：<a href="https://docs.nvidia.com/cuda/archive/12.9.1/pdf/CUDA_C_Programming_Guide.pdf">CUDA 编程指南：分支谓词化</a>。</p></div>
+<details class="guided-example"><summary>lane-slot 利用率与执行时间</summary><p>16 个线程各执行一次操作，有效工作量为 16。两条等长路径共提供 2 × 16 = 32 个 lane-slot，因此利用率 50%。真实路径长度可能不同，编译器可能采用上述谓词化，程序也可能受其他瓶颈限制。现代 NVIDIA 的独立线程调度改变控制和同步细节，但不会消除成组发射的效率约束；依赖隐式 warp 同步的程序可能不再满足正确性要求。</p></details>
+</div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<ul><li>SIMT 提供标量线程的编程语义，并以线程组共享指令发射；线程与物理 lane 属于不同概念。</li><li>组内路径不一致产生分歧；不同 warp 分别执行不同路径，不构成组内分歧。</li><li>Active mask 保持各线程的执行语义。分歧可能降低有效 lane 利用率，但对总耗时的影响取决于路径长度、编译结果及其他瓶颈。</li></ul>
+</div><p class="lesson-bridge">前述执行机制需要线程状态存储、调度器、执行流水线和数据存储的支持。下一节讨论这些需求对应的硬件资源。 <a href="chapter-01.html#overview">继续 →</a></p>
+</section>
+
+    <section class="lesson shell" id="overview" data-title="GPU 总体结构" data-keywords="gpu structure sm cu cache hbm grid block thread">
+<header class="lesson-head"><p>第六步 / 用需求解释结构</p><h2>1.6 执行机制对应的 GPU 硬件结构</h2><p>SM（Streaming Multiprocessor）是 NVIDIA 的片上执行单元组织，包含线程状态、调度与执行等资源。AMD 的 CU 是相关硬件组织概念，内部结构并非一一对应。</p></header>
+<div class="teaching-phase" data-phase="01"><h3 class="phase-heading">01 · 问题</h3>
+<p>支持大量驻留线程、就绪组调度和成组执行，需要哪些硬件资源？Grid、Block、Warp 与 SM 分别处于什么层次？</p>
+</div><div class="teaching-phase" data-phase="02"><h3 class="phase-heading">02 · 背景</h3>
+<p>Kernel 是 GPU 上执行的核函数；一次启动（launch）安排一批线程执行它。<strong>Grid（线程块网格）是这次启动所包含的全部 Block 的集合</strong>，用于描述整批工作的规模与块编号；Block 则划分局部协作范围。</p>
+<div class="guided-example" id="grid-basics" data-title="Grid：一次启动的全部线程块"><h3>Grid：一次启动的全部线程块</h3><p>例如 <code>kernel&lt;&lt;&lt;8, 128&gt;&gt;&gt;(...)</code> 表示一个包含 8 个 Block 的 Grid，每块有 128 个线程，共 1,024 个线程。块编号 <code>blockIdx.x</code> 为 0～7，块内线程编号 <code>threadIdx.x</code> 为 0～127；本例可用 <code>i = blockIdx.x * 128 + threadIdx.x</code> 确定各线程处理的数组元素。</p><p>Grid 是逻辑工作集合，不是一块物理硬件，也不要求所有 Block 同时执行。硬件将 Block 分配到可用 SM，资源不足时分批执行；因此 8 个 Block 不要求 8 个 SM。Grid 可按一维、二维或三维编号，这些维度便于对应数组、图像等数据，并不表示 SM 的物理排列。参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html#thread-blocks-and-grids">CUDA：Thread Blocks 与 Grids</a>。</p></div>
+<p>在 NVIDIA GPU 中，Block 内的线程按 Warp 组织执行，SM 提供状态存储、调度与运算资源。Grid → Block → Thread 描述软件工作的组织；Warp 描述执行分组，SM 描述物理承载。这些概念不是逐层包含的同一种“核心”。AMD 的相关术语包括 work-group、wavefront 与 CU，具体组织依架构而异。</p>
+</div><div class="teaching-phase" data-phase="03"><h3 class="phase-heading">03 · 底层逻辑与解决方式</h3>
+<div class="guided-example"><h3>硬件资源与执行需求的对应关系</h3><dl><div><dt>寄存器</dt><dd>保存 resident 线程状态；容量有限，所以不能无限驻留。</dd></div><div><dt>调度器</dt><dd>从 ready 组选择指令发射，覆盖其他组的等待。</dd></div><div><dt>运算通道（算术数据通路）</dt><dd>实际完成加法、乘法等运算的硬件电路，处理各活跃线程的操作数；选择与发射 Warp 指令则由调度和控制部分负责。</dd></div><div><dt>共享内存 / L1</dt><dd>提供片上数据存储。共享内存由程序显式管理，cache 通常由硬件管理，语义不同。</dd></div><div><dt>L2 / 显存</dt><dd>向执行单元供应数据。带宽影响总供给能力，延迟影响单次访问等待；增加线程数量无法突破带宽上限。</dd></div></dl></div><p>硬件将线程块分配到具有足够资源的执行单元。块中的线程被分为执行组，其状态占用片上资源；调度器选择就绪指令，运算通道处理活跃线程的数据，存储层次供应所需操作数。</p><p class="experiment-prompt"><b>映射示例：</b>kernel 是 GPU 上执行的函数，一次 launch 创建 grid。处理 1,024 个元素，每块 128 个线程，每线程处理一个元素，共 8 个块；NVIDIA 上每块有 4 个 warp。选择下方层级可显示相应映射。</p><div class="architecture-map">
+        <div class="hierarchy" id="hierarchy">
+          <button data-level="grid"><small>软件</small><strong>Grid</strong><span>一次 kernel launch 的全部线程块</span></button>
+          <button data-level="block"><small>软件</small><strong>Thread Block / Work-group</strong><span>协作与共享片上存储的基本范围</span></button>
+          <button data-level="warp"><small>执行分组</small><strong>Warp / Wavefront</strong><span>硬件调度与发射的线程组</span></button>
+          <button data-level="thread"><small>软件</small><strong>Thread / Work-item</strong><span>拥有标量寄存器状态的逻辑线程</span></button>
+        </div>
+        <div class="chip-view" id="chip-view">
+          <div class="host"><span>CPU / Host</span><i>kernel launch</i></div>
+          <div class="global-memory"><span>Global memory · HBM/GDDR</span><i>高带宽 · 高延迟</i></div>
+          <div class="gpu-box">
+            <span class="gpu-label">GPU Device</span>
+            <div class="l2">共享 L2 Cache</div>
+            <div class="sm-row" id="sm-row"></div>
+          </div>
+        </div>
+</div><div class="architecture-explain" id="architecture-explain" aria-live="polite"><strong>Grid → 多个 SM/CU</strong><p>线程块由硬件工作分配器派发到有足够资源的 SM/CU。一个块通常不会跨多个 SM/CU 执行，但一个 SM/CU 可以同时容纳多个块，具体取决于资源。</p></div><details class="guided-example"><summary>逻辑线程与物理运算通道</summary><p>图中的 8 个 SM/CU 与每格 12 个方块仅为示意，不代表真实数量、warp 宽度或块的固定分配。同一执行资源会随时间服务不同线程。Block 规定协作范围，warp 规定执行分组，SM 承载这些工作的硬件资源；这些概念分别属于软件组织、执行分组与硬件资源，不能统一等同于“核心”。</p></details>
+<figure class="learning-figure sm-work-map" id="sm-block-warp-map">
+<h4>图 1.6 · Block、Warp 与 SM：工作分组和硬件承载</h4>
+<p>以 <code>kernel&lt;&lt;&lt;2, 64&gt;&gt;&gt;(...)</code> 为例：一次启动包含两个 Block，每块 64 个线程。假设资源足够，下图展示两个 Block 同时驻留在一个 SM 的一种情况。</p>
+<div class="sm-map-label">① 程序中的工作分组 · 以下虚线框不是硬件部件</div>
+<div class="diagram-grid">
+<div class="diagram-box sm-logical"><strong>Block B0 · 协作范围</strong><div class="sm-warp">B0 / W0：线程 0～31</div><div class="sm-warp">B0 / W1：线程 32～63</div></div>
+<div class="diagram-box sm-logical"><strong>Block B1 · 协作范围</strong><div class="sm-warp">B1 / W0：线程 0～31</div><div class="sm-warp">B1 / W1：线程 32～63</div></div>
+</div>
+<p class="diagram-link">↓ Block 获得 SM 资源：保存线程状态，并分配块级资源 ↓</p>
+<div class="sm-physical">
+<strong class="sm-map-label">② 一个物理 SM · 以下实线框表示硬件功能资源</strong>
+<div class="diagram-grid">
+<div class="diagram-box diagram-state"><strong>寄存器文件与控制状态存储</strong><small>保存 B0/W0、B0/W1、B1/W0、B1/W1 的线程数据及执行进度。四组状态同时驻留，不是四套运算核心。</small></div>
+<div class="diagram-box"><strong>共享内存</strong><small>程序使用时，分别为 B0、B1 分配各自的空间；两个 Block 的块级共享内存与同步范围仍然分开。</small></div>
+</div>
+<p class="diagram-link">↓ 状态与依赖信息提供候选指令 ↓</p>
+<div class="diagram-box"><strong>Warp 调度器与发射资源</strong><small>各调度器从自己管理的驻留 Warp 中选择就绪指令。例：B0/W0 等待加载结果时，B1/W1 的就绪指令可能获得发射机会。</small></div>
+<p class="diagram-link">↓ 被选中的指令 + 对应线程的操作数 ↓</p>
+<div class="diagram-box diagram-exec"><strong>执行流水线 · 算术单元、加载／存储单元等</strong><small>处理活跃线程的数据；这些物理资源随时间服务不同 Warp，而非每个 Warp 独占一套。</small></div>
+<p class="diagram-link">运算结果 → 写回对应线程的寄存器状态<br>访存请求 ↔ 片上存储及更下层存储系统</p>
+</div>
+<figcaption>线程编号为各 Block 内的局部编号；W0、W1 也在各 Block 内分别编号。图中省略 SM 子分区、缓存和具体通道数，不规定所有 Warp 共用一个调度器，也不表示每周期只能发射一条指令。两个 Block 也可能分配到不同 SM，实际分配不由本例的启动语句指定。</figcaption>
+<p class="diagram-caption"><strong>Block 划分协作范围，Warp 划分成组执行的线程，SM 提供保存状态和执行指令的物理资源。</strong>上方是工作如何分组，下方是这些工作如何由硬件承载。</p>
+</figure>
+</div><div class="teaching-phase" data-phase="04"><h3 class="phase-heading">04 · 核心内容提炼</h3>
+<ul><li>Grid 与 Block 组织软件任务，warp 组织线程执行，SM/CU 提供硬件资源；逻辑线程数量不等于物理运算通道数量。</li><li>寄存器支持驻留状态，调度器选择就绪工作，算术通道完成操作，缓存与显存提供数据。各资源共同决定性能。</li><li>GPU 的吞吐优势要求可利用的独立工作和充分的数据供应；线程数量本身不是性能保证。</li></ul>
+</div><div class="takeaway">
+        <p>本章结论</p>
+        <blockquote>CPU 通常侧重降低单线程执行延迟；GPU 通常通过调度其他驻留且就绪的线程束，覆盖部分线程的等待时间，提高执行资源利用率与整体吞吐量。</blockquote>
+      </div><p class="lesson-bridge">本章的概念链条由任务独立性延伸至线程调度与资源约束，可用于分析大量线程的作用及其适用条件。以下练习检验这些关系。 <a href="chapter-01.html#check">继续 →</a></p>
+</section>
+
+    <section class="quiz shell" id="check" data-title="理解检查" data-keywords="quiz test check">
+      <header class="lesson-head"><p>理解检查</p><h2>1.7 延迟、分歧与资源约束的概念辨析</h2></header>
+      <noscript><p>启用 JavaScript 后可使用交互式理解检查。</p></noscript>
+      <p>本章建立了线程组织与调度模型。接下来讨论指令如何取得数据并完成运算：<a href="chapter-hardware.html">第二章：计算、存储与数据搬运 →</a></p>
+    </section>
+
+  </main>
+
+  <footer class="footer shell">
+    <p><strong>参考资料：</strong>本章采用体系结构教科书中的 latency / throughput、ILP / TLP / DLP 通用定义，并以厂商官方编程模型核对术语。NVIDIA 的 warp 固定为 32 threads；AMD wavefront 宽度随产品与架构而变化。延伸阅读：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/03-advanced/advanced-kernel-programming.html" target="_blank" rel="noreferrer">CUDA Programming Guide · SIMT</a> · <a href="https://rocm.docs.amd.com/en/develop/reference/glossary/device-hardware.html" target="_blank" rel="noreferrer">AMD ROCm Hardware Glossary</a>。页面中的面积、周期和利用率均为可解释的教学模型，不是实测基准。</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 3：成组执行与硬件多线程 · GPU 架构实验室</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="simd-warp.css"><link rel="stylesheet" href="learning-figures.css"><link rel="stylesheet" href="reading-nav.css">
+<script src="app.js" defer></script><script src="learning-figures.js" defer></script><script src="site-map.js" defer></script><script src="reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section class="appendix-chapter" id="appendix-execution" data-title="附3 成组执行与硬件多线程"><h2>附录 3：成组执行与硬件多线程</h2>
+<div id="instruction-data-path" data-title="一条指令如何驱动多个运算通道" data-keywords="ADD 译码 电路 加法器 操作数 数据通路">
+<h3>附3.1 共同指令与运算通道</h3>
+<p>指令与数据经过不同的线路。示意指令 <code>ADD R2, R0, R1</code> 指定“读取 R0、R1，相加后写入 R2”，并不包含具体的数值。同样的寄存器名称，在不同线程中代表各自的逻辑寄存器状态。</p>
+<p>下图采用四个线程、四个加法通道的教学模型：同一指令提供操作控制，各线程分别提供数据。真实 NVIDIA Warp 包含 32 个线程。</p>
+<figure class="learning-figure" id="warp-circuit">
+<strong class="diagram-title">图 附3-1 · 一条加法指令与四路独立数据</strong>
+<p class="diagram-caption">实线：操作数与结果　·　蓝色虚线：共同的加法控制</p>
+<div class="warp-circuit-scroll">
+<svg class="warp-circuit-svg" viewBox="0 0 740 465" role="img" aria-labelledby="warp-circuit-title warp-circuit-desc">
+<title id="warp-circuit-title">Warp 的共同控制与独立数据路径</title>
+<desc id="warp-circuit-desc">调度器选中 W0 的 ADD 指令，译码后的加法控制通过虚线送入四个共享通道。T0 到 T3 分别输入 1 与 10、2 与 20、3 与 30、4 与 40，结果 11、22、33、44 分别写回自己的 R2。加法器不是 W0 私有的。</desc>
+<defs><marker id="warp-data-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="var(--color-ink)"/></marker><marker id="warp-control-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="var(--color-blue)"/></marker></defs>
+<text x="370" y="24">调度器选中 W0 的指令：ADD R2, R0, R1</text>
+<path class="warp-wire" d="M370 34 V49" marker-end="url(#warp-data-arrow)"/>
+<rect class="warp-data" x="205" y="55" width="330" height="44"/>
+<text x="370" y="83">译码电路：产生加法控制信号</text>
+<path class="warp-control" d="M370 99 V115 M178 115 H688"/>
+<g><rect class="warp-data" x="30" y="150" width="140" height="60"/><text x="100" y="174">T0 的寄存器</text><text x="100" y="195">R0=1，R1=10</text><path class="warp-wire" d="M100 210 V260" marker-end="url(#warp-data-arrow)"/><rect class="warp-alu" x="40" y="265" width="120" height="50"/><text x="100" y="295">加法通道 0</text><path class="warp-wire" d="M100 315 V365" marker-end="url(#warp-data-arrow)"/><rect class="warp-data" x="30" y="370" width="140" height="50"/><text x="100" y="400">T0 的 R2 ← 11</text><path class="warp-control" d="M178 115 V290 H163" marker-end="url(#warp-control-arrow)"/></g>
+<g><rect class="warp-data" x="200" y="150" width="140" height="60"/><text x="270" y="174">T1 的寄存器</text><text x="270" y="195">R0=2，R1=20</text><path class="warp-wire" d="M270 210 V260" marker-end="url(#warp-data-arrow)"/><rect class="warp-alu" x="210" y="265" width="120" height="50"/><text x="270" y="295">加法通道 1</text><path class="warp-wire" d="M270 315 V365" marker-end="url(#warp-data-arrow)"/><rect class="warp-data" x="200" y="370" width="140" height="50"/><text x="270" y="400">T1 的 R2 ← 22</text><path class="warp-control" d="M348 115 V290 H333" marker-end="url(#warp-control-arrow)"/></g>
+<g><rect class="warp-data" x="370" y="150" width="140" height="60"/><text x="440" y="174">T2 的寄存器</text><text x="440" y="195">R0=3，R1=30</text><path class="warp-wire" d="M440 210 V260" marker-end="url(#warp-data-arrow)"/><rect class="warp-alu" x="380" y="265" width="120" height="50"/><text x="440" y="295">加法通道 2</text><path class="warp-wire" d="M440 315 V365" marker-end="url(#warp-data-arrow)"/><rect class="warp-data" x="370" y="370" width="140" height="50"/><text x="440" y="400">T2 的 R2 ← 33</text><path class="warp-control" d="M518 115 V290 H503" marker-end="url(#warp-control-arrow)"/></g>
+<g><rect class="warp-data" x="540" y="150" width="140" height="60"/><text x="610" y="174">T3 的寄存器</text><text x="610" y="195">R0=4，R1=40</text><path class="warp-wire" d="M610 210 V260" marker-end="url(#warp-data-arrow)"/><rect class="warp-alu" x="550" y="265" width="120" height="50"/><text x="610" y="295">加法通道 3</text><path class="warp-wire" d="M610 315 V365" marker-end="url(#warp-data-arrow)"/><rect class="warp-data" x="540" y="370" width="140" height="50"/><text x="610" y="400">T3 的 R2 ← 44</text><path class="warp-control" d="M688 115 V290 H673" marker-end="url(#warp-control-arrow)"/></g>
+<text x="370" y="452">运算通道由多个 Warp 复用；寄存器数据保持各线程归属</text>
+</svg>
+</div>
+<figcaption>四列分别表示四份数据经过运算通道并写回的过程。虚线绕过寄存器，直接指向通道的操作控制端；它不传递各线程的数值。图示省略活跃掩码、选路和流水线，不表示物理布局或单周期完成。</figcaption>
+</figure>
+<p>控制信号可以通过布线和缓冲电路分发给多个接收端；数据输入则分别连接到各通道。因而，共享一条指令仍能保留多份数据的运算能力，并不要求所有数据依次经过同一个加法器。</p>
+<p class="precision">图示省略流水线、寄存器分银行和操作数收集等细节，不是具体 GPU 的布线图。Warp 的 32 个线程可能分多拍处理；一条指令既不等于一次标量运算，也不保证一个周期完成。反过来，两个线程先后使用同一个加法器，也不能据此判断它们属于同一 Warp。</p>
+<p>参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/pdf/cuda-programming-guide.pdf">CUDA 指南：SIMT</a>、<a href="https://research.nvidia.com/sites/default/files/pubs/2011-12_A-Compile-Time-Managed/2011_12_NVIDIA_MICRO.pdf">NVIDIA 操作数供给研究</a>。</p>
+</div>
+<div id="warp-smt-roles" data-title="附3.2 Block、Warp 与 SMT 的关系" data-keywords="SMT SIMD SIMT 控制模型 数据模型 block warp">
+<h3>附3.2 Block、Warp 与 SMT 的关系</h3>
+<p>Block 与 Warp 不能简单对应“数据模型”和“控制模型”。Block 同时涉及工作分配、共享内存和同步控制；Warp 则组织共同指令对各线程数据的执行。不同 Block 可以访问同一份全局数据，同一 Block 内也可以处理互不相关的数据，因此 Block 不直接规定全局数据的划分或归属。</p>
+<figure class="learning-figure"><div class="table-scroll"><table class="comparison"><caption>表 附3-1 · 执行组织与协作范围的区别</caption><thead><tr><th scope="col">观察对象</th><th scope="col">组织的是什么</th><th scope="col">与 CPU 概念的联系</th></tr></thead><tbody><tr><th scope="row">一个 Warp 内部</th><td>活跃线程执行共同指令，操作数与结果各自独立</td><td>类似 SIMD 的成组数据运算，不是 32 个独立发射任意指令的 SMT 线程</td></tr><tr><th scope="row">多个驻留 Warp 之间</th><td>从不同组选择就绪指令，共享执行资源</td><td>与 SMT 扩大工作来源、覆盖等待的思路相通，但调度粒度与实现不同</td></tr><tr><th scope="row">一个 Block</th><td>工作分配及块内共享内存、屏障的作用范围</td><td>不能直接等同于 CPU 核心、NUMA 节点或数据分区</td></tr></tbody></table></div><figcaption>Warp 内成组执行与 Warp 间调度是两个层次。增加驻留 Warp 数量扩大候选集合，不直接增加物理运算通道。</figcaption></figure>
+</div>
+</section></main></body></html>

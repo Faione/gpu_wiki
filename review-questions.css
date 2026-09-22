@@ -1,0 +1,22 @@
+.review-panel { margin-block: 1.5rem; border: 1px solid var(--color-rule-2, #c9c5ba); background: var(--color-paper-2, #f3f0e7); }
+.review-panel > summary, .review-panel > h3 { padding: 1rem 1.25rem; margin: 0; font: 600 1rem/1.6 var(--font-body, sans-serif); }
+.review-panel > summary { cursor: pointer; }
+.review-body { padding: 0 1.25rem 1.25rem; }
+.review-help, .review-status { font-size: .9rem; line-height: 1.7; }
+.review-question { min-width: 0; margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--color-rule-2, #c9c5ba); background: var(--color-paper, #fffdf6); }
+.review-question legend { max-width: 100%; padding-inline: .4rem; font-weight: 600; line-height: 1.8; overflow-wrap: anywhere; }
+.review-panel button { min-height: 2.75rem; padding: .5rem .85rem; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer; white-space: normal; }
+.review-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .75rem; margin-block: .5rem; }
+.review-panel .review-option { text-align: left; line-height: 1.7; overflow-wrap: anywhere; }
+.review-panel .review-option:hover { background: var(--color-paper-2, #f3f0e7); }
+.review-panel .review-option[aria-pressed="true"].is-correct { background: #e8f4eb; color: #205b34; border-color: #28723f; box-shadow: inset 0 0 0 1px #28723f; }
+.review-panel .review-option[aria-pressed="true"].is-incorrect { background: #fcecea; color: #922b25; border-color: #ad3730; box-shadow: inset 0 0 0 1px #ad3730; }
+.review-panel :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.review-feedback:empty { display: none; }
+.review-feedback { margin-top: 1rem; padding: .75rem; border-left: 3px solid currentColor; font-size: .95rem; line-height: 1.8; }
+.review-feedback p { margin: 0 0 .5rem; }
+.review-feedback.is-correct { border-color: #28723f; background: #e8f4eb; color: #205b34; }
+.review-feedback.is-incorrect { border-color: #ad3730; background: #fcecea; color: #922b25; }
+.review-verdict { display: block; margin-bottom: .4rem; font-size: 1.05rem; font-weight: 700; }
+.review-feedback a { color: inherit; text-decoration: underline; }
+@media (max-width: 480px) { .review-body { padding-inline: .75rem; } .review-question { padding: .65rem; } }

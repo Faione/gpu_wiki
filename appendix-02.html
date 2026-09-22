@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 2：Block 与 Warp 的分工 · GPU 架构实验室</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="simd-warp.css"><link rel="stylesheet" href="learning-figures.css"><link rel="stylesheet" href="reading-nav.css">
+<script src="app.js" defer></script><script src="learning-figures.js" defer></script><script src="site-map.js" defer></script><script src="reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section class="appendix-chapter" id="thread-to-sm" data-title="Block 的分配作用与 Warp 的执行作用" data-keywords="thread block warp sm 同步 指令 加法器">
+<h2>附录 2：Block 与 Warp 的分工</h2>
+<p>即使上面的 64 个线程完全独立，它们也必须属于 Block。<strong>Block 是 GPU 分配工作的单位，同时提供块内协作能力。</strong>普通 Block 被整体分配到一个 SM；SM 是承载线程状态、调度器与运算电路的硬件组织。不同 Block 可独立安排到可用资源上，不保证同时执行或按编号执行。</p>
+<p>上述启动配置由程序指定一个 64 线程 Block。NVIDIA 硬件再按块内连续编号，将其分为两个 32 线程的 Warp。程序无需再发出“创建 Warp”的调用。</p>
+<pre class="dependency-chain">程序配置：1 个 Block × 64 个线程
+                   ↓ 硬件按块内编号划分
+Block B0：  Warp 0 [T0…T31]   Warp 1 [T32…T63]
+                   ↓ Block 分配到一个 SM
+SM：保存这些线程的状态，并选择 Warp 的指令执行</pre>
+<div id="why-warp" data-title="已有 Block，为什么还需要 Warp" data-keywords="warp 必要性 成组执行 控制 发射">
+<h3>附2.1 Warp 的作用</h3>
+<p>线程需要不同操作时的执行方式，以及 SIMT 与算法复杂度的关系，见<a href="appendix-12.html#simt-complexity">附录 12.2：算法复杂度与指令执行方式</a>。</p>
+<p>共同指令如何连接到多路运算硬件，见<a href="appendix-03.html#warp-circuit">图 附3-1：一条加法指令与四路独立数据</a>。</p>
+<figure class="learning-figure">
+<strong class="diagram-title">图 附2-1 · 工作分组与执行分组</strong>
+<div class="diagram-box"><strong>程序指定：一个 Block，128 个线程</strong><small>确定工作组大小，以及块内共享内存和屏障的作用范围</small></div>
+<p class="diagram-link">按块内线性编号，每 32 个线程一组 ↓</p>
+<div class="diagram-grid"><div class="diagram-box"><strong>Warp 0 · T0～T31</strong><small>共同组织指令执行</small></div><div class="diagram-box"><strong>Warp 1 · T32～T63</strong><small>可具有不同的执行进度</small></div><div class="diagram-box"><strong>Warp 2 · T64～T95</strong><small>保留本组线程状态</small></div><div class="diagram-box"><strong>Warp 3 · T96～T127</strong><small>提供另一组候选指令</small></div></div>
+<p class="diagram-link">整个 Block 分配到同一 SM；调度器选择组内可发射的指令 ↓</p>
+<div class="diagram-box diagram-exec"><strong>SM 的执行流水线</strong><small>处理被选中指令的操作数；不同 Warp 复用物理执行资源</small></div>
+<figcaption>上半部分是逻辑工作划分，下半部分是硬件承载关系。四个 Warp 不对应四个专用核心，也不保证同时发射。图示采用 NVIDIA 的 32 线程 Warp。</figcaption>
+</figure>
+<p>Block 确定一批工作的成员及协作范围，但硬件还需要决定每次如何向其中的线程发射指令。若各线程分别组织指令执行，会重复处理许多相同的操作；共享共同指令的发射，则可以把控制开销分摊到多份数据运算上。</p>
+<p>也可以设想整个 Block 一起推进，但这会将程序配置的工作组大小与共同执行的范围绑定。引入 Warp 后，二者可以分开：例如一个 128 线程 Block 分为四个 Warp，各组可有不同进度。一组的指令等待数据时，另一组的就绪指令可能获得发射机会，无需整个 Block 始终同时推进。</p>
+<p class="key-insight">Block 的大小服务于工作组织；Warp 的宽度服务于成组执行。Warp 在共享指令控制与保留组间调度灵活性之间提供一种组织方式。32 是 NVIDIA 的设计选择，并不是所有 GPU 必须采用的宽度。</p>
+</div>
+<h3 id="block-configuration" data-title="附2.2 Block 配置与协作范围">附2.2 Block 配置与协作范围</h3>
+<p>下面两种配置都能计算 64 个独立结果，也都包含两个 Warp。切换配置可观察：改变的是 Block 的边界，而不是把线程数变成更多物理核心。</p>
+<div class="mapping-controls" role="group" aria-label="比较 Block 配置"><button type="button" data-block-layout="one" aria-pressed="true">1 × 64 线程</button><button type="button" data-block-layout="two" aria-pressed="false">2 × 32 线程</button></div>
+<figure class="mapping-figure"><div id="block-layout-view"></div><figcaption id="block-layout-note" aria-live="polite"></figcaption></figure>
+<p>若程序后来需要 64 个线程交换中间结果，一个 Block 内可以使用共享内存和块级屏障。拆成两个 Block 后，原来覆盖 64 线程的块级屏障不再适用，需要重新安排协作，例如每块输出部分结果，再由后续 kernel 汇总。区别首先是可用机制，而非“同步变慢”；独立计算则无需添加同步。</p>
+
+
+
+
+
+<details><summary>自测：两个 Block 的结果最终要汇总，是否必须改成一个 Block？</summary><p>不必。可以先让两个 Block 分别产生部分结果，再启动后续 kernel 汇总。最终属于同一个算法结果，不意味着必须属于同一块内协作范围。</p></details>
+<p>参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html">CUDA 编程模型</a>。进一步观察共同指令与活跃线程，可阅读<a href="index.html#appendices">附录 7—13：编程模型与执行方式</a>。</p>
+<details><summary>扩展实验：四个 Block 的线程编号与映射</summary>
+<p>本例配置 4 个 Block，每块 64 个线程，共 256 个线程；每块包含两个 Warp。Block 大小取 32 的倍数可避免尾 Warp 不满，但不保证性能最优。</p>
+<pre class="dependency-chain">B0：T0～T63     → W0：T0～T31，W1：T32～T63
+B1：T64～T127   → W0：T64～T95，W1：T96～T127
+
+T70 → B1 → 块内编号 6 → B1/W0 的第 6 号位置</pre>
+<p>下图采用一维连续编号，每线程处理一个数组元素。调整编号可查看所属分组；编号表示逻辑工作，不对应专用硬件核心。</p>
+<label for="map-thread">线程全局编号 T<input id="map-thread" type="range" min="0" max="255" value="70"></label>
+<p id="map-thread-description" aria-live="polite"></p>
+<figure class="mapping-figure"><div id="map-grouping"></div><figcaption>4 个 Block × 每块 2 个 Warp × 每组 32 个线程。W 编号在每个 Block 内重新开始。</figcaption></figure>
+<p>若只有 250 个元素，但启动 4 × 64 个线程，可通过 <code>if (i &lt; 250)</code> 避免多余线程越界。这里是已创建线程不参与部分操作，与块大小导致的尾 Warp 不满不同。</p>
+</details>
+<details><summary>与 NUMA 局部性的联系</summary><p>NUMA 节点描述硬件的访问局部性，Block 则是软件工作组。相似之处是局部数据交换可能降低通信成本，但两者没有一一对应关系。普通 Block 的共享内存有独立作用域，即使两个 Block 位于同一 SM，也不能直接访问彼此的共享内存；全局数据也不会因 Block 分配而自动迁入该 SM。线程块集群等扩展机制不在本例范围内。</p><p>参考：<a href="https://docs.kernel.org/mm/numa.html">Linux NUMA 概念</a>、<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/intro-to-cuda-cpp.html">CUDA 块内协作</a>。</p></details>
+</section></main></body></html>

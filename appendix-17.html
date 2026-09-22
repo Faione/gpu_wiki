@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 17：存储规格与测量口径 · GPU 架构实验室</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="simd-warp.css"><link rel="stylesheet" href="learning-figures.css"><link rel="stylesheet" href="driver-chapter.css?v=2"><link rel="stylesheet" href="hardware-chapter.css"><link rel="stylesheet" href="reading-nav.css">
+<script src="site-map.js" defer></script><script src="reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="index.html">知识地图 ↗</a></header><main class="supplement-body" id="top"><section id="memory-reference"><h2>附录 17：存储规格与测量口径</h2><p>本篇提供第二章存储模型的具体参数例子。型号数字用于建立量级，不作为其他 GPU 或昇腾硬件的配置依据。</p><h3 id="memory-specs">附17.1 H100 的容量与物理范围</h3><figure class="learning-figure" id="memory-capacity-map" data-title="多级存储的范围与容量"><h4>图 附17-1 · GPU 多级存储：位置、范围与容量</h4>
+<p>下面以 <strong>H100 SXM 80 GB</strong> 为容量示例。嵌套框表示物理范围，箭头表示主要访问关系；框的大小不按容量比例绘制。</p>
+<div class="memory-package"><h5>GPU 模块／封装范围</h5>
+<div class="memory-die"><h5>GPU 计算芯片内部</h5>
+<div class="memory-sm-grid">
+<div class="memory-sm"><h5>SM 0</h5><div class="memory-level"><strong>执行流水线 ↔ 寄存器文件</strong><span class="memory-size">256 KB / SM</span><span>64K 个 32 位寄存器，由驻留线程分配使用</span></div><div class="arch-connector">↕ 操作数读写与加载／存储</div><div class="memory-pool"><strong>L1 / Texture / Shared 联合资源：256 KB / SM</strong><div class="arch-grid"><div class="memory-level"><strong>共享内存</strong><span>最多 228 KB / SM</span><span>显式协作空间</span></div><div class="memory-level"><strong>L1 / Texture 缓存</strong><span>容量受划分配置影响</span><span>硬件管理缓存</span></div></div></div></div>
+<div class="memory-sm"><h5>SM 1 … SM N</h5><div class="memory-level"><strong>各自的寄存器文件</strong><span>每个 SM 有本地资源，不是任意线程可访问的全局寄存器池</span></div><div class="arch-connector">↕</div><div class="memory-level"><strong>各自的 L1 / Shared 资源</strong><span>资源分配以所在 SM 为基础；本图采用普通 Block 的协作模型</span></div></div>
+</div><div class="arch-connector">↕ 片上互连：SM 的全局访存与返回数据</div>
+<div class="memory-level memory-wide"><strong>L2 缓存 · 整颗 GPU 共享</strong><span class="memory-size">50 MB / GPU</span><span>L1 未命中或绕过 L1 的访问可以由 L2 提供数据</span></div><div class="arch-connector">↕ 内存控制器与显存接口</div></div>
+<div class="arch-connector">↕ 离开计算芯片；仍在 GPU 模块／封装范围内</div>
+<div class="memory-level memory-wide"><strong>HBM3 显存 · 大容量设备 DRAM</strong><span class="memory-size">80 GB / GPU · 标称带宽 3.35 TB/s</span><span>位于独立的存储芯片堆栈，不是 SM 内的 SRAM</span></div></div>
+<div class="arch-connector">↕ 主机互连与传输机制（例如 PCIe，具体路径依系统）</div>
+<div class="memory-level memory-host"><strong>主机 DRAM</strong><span>容量由主机配置决定，不计入上述 80 GB 显存；GPU 访问它还受到互连限制</span></div>
+<figcaption>256 KB 寄存器文件与 256 KB 联合 L1/Shared 资源是不同的容量池；但 L1 与共享内存不能各按 256 KB 相加。共享内存也不是全局访问必经的缓存层。数值沿用厂商 KB/MB/GB 标注；228 KB 是每 SM 上限，不是每个 Block 均可占用的大小（单 Block 上限为 227 KB，且需满足配置条件）。</figcaption></figure><h3 id="memory-metrics">附17.2 延迟与带宽的不同口径</h3><div id="memory-speed" data-title="容量、延迟与带宽">
+<p><strong>容量</strong>表示能保存多少数据；<strong>访问延迟</strong>表示一次请求等待结果的时间；<strong>带宽</strong>表示单位时间可传送的数据量。HBM 可以通过大量并发访问提供很高带宽，但一次依赖加载仍可能需要较长等待。</p>
+<div class="summary-table"><table><caption>从线程执行视角比较访问特征（定性关系，不是实测排名）</caption><thead><tr><th>资源</th><th>容量口径</th><th>访问速度与约束</th></tr></thead><tbody>
+<tr><td>寄存器</td><td>256 KB / SM，分给多个线程</td><td>直接向执行流水线提供操作数，通常是最快的工作数据来源；仍受依赖、端口与访问冲突限制</td></tr>
+<tr><td>共享内存与 L1</td><td>联合资源 256 KB / SM</td><td>片上短路径，通常比访问 L2 或 DRAM 的延迟更低；共享内存受 bank 冲突影响，L1 收益依赖命中</td></tr>
+<tr><td>L2</td><td>50 MB / GPU</td><td>路径经过片上互连，通常比 L1 命中等待更久，但可避免访问显存；多个 SM 的请求会竞争资源</td></tr>
+<tr><td>HBM3</td><td>80 GB / GPU</td><td>未被缓存满足的访问可能到达这里；单次等待通常更长，整颗 GPU 的标称数据带宽为 3.35 TB/s</td></tr>
+<tr><td>主机内存</td><td>由服务器／工作站配置决定</td><td>从 GPU 访问时还涉及互连及相应映射或搬运；CPU 本地 DRAM 带宽不等于 GPU 可获得的带宽</td></tr>
+</tbody></table></div>
+<p>这些层级没有跨架构通用的固定纳秒或周期数。测量结果会随命中位置、时钟、访问模式和排队负载变化；寄存器读数的代价也不应直接等同于整条算术指令的完成延迟。</p>
+<p>以标称 3.35 TB/s 为例，传送 1 GB 数据的纯带宽时间约为 <code>1 GB ÷ 3.35 TB/s ≈ 0.30 ms</code>。这是忽略额外开销的理想估算，既不是一次加载的延迟，也不是整个 Kernel 的运行时间。</p>
+<p class="model-note">容量依据 <a href="https://docs.nvidia.com/cuda/hopper-tuning-guide/">NVIDIA Hopper Tuning Guide</a>；H100 SXM 显存带宽依据 <a href="https://www.nvidia.com/en-us/data-center/h100/">H100 产品规格</a>。这里不混用 H100 PCIe 或 H100 NVL 的参数。容量大不等于速度快，远端容量也不能替代每个 SM 的寄存器与共享内存配额。</p></div><p><a href="chapter-hardware.html#memory-hierarchy">返回第二章存储主线 →</a></p></section></main></body></html>

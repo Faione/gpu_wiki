@@ -1,0 +1,34 @@
+/* Teaching diagrams: geometry expresses containment, coordinates or dataflow. */
+.visual-scroll { max-width:100%; overflow-x:auto; margin-block:1.25rem; }
+.visual-scroll:focus-visible { outline:3px solid var(--color-focus); outline-offset:3px; }
+.visual-diagram { display:block; width:100%; min-width:760px; height:auto; }
+.visual-diagram text { fill:var(--color-ink); font:16px var(--font-body); }
+.visual-diagram .dv-center { text-anchor:middle; }
+.visual-diagram .dv-small { font-size:14px; }
+.visual-diagram .dv-big { font-size:30px; }
+.visual-diagram .dv-store { fill:var(--color-paper); stroke:var(--color-rule-2); stroke-width:1.5; }
+.visual-diagram .dv-space { fill:var(--color-paper-2); stroke:var(--color-rule-2); stroke-width:1.5; stroke-dasharray:7 5; }
+.visual-diagram .dv-unit { fill:var(--color-paper-3); stroke:var(--color-ink); stroke-width:2; }
+.visual-diagram .dv-active { fill:var(--color-paper-3); stroke:var(--color-accent); stroke-width:3; }
+.visual-diagram .dv-wire { fill:none; stroke:var(--color-ink); stroke-width:2; }
+.visual-diagram .dv-control { fill:none; stroke:var(--color-blue); stroke-width:2; stroke-dasharray:6 5; }
+.visual-diagram .dv-guide { fill:none; stroke:var(--color-rule-2); stroke-width:1; stroke-dasharray:3 5; }
+.visual-diagram .dv-plot { fill:none; stroke:var(--color-accent); stroke-width:4; }
+.visual-diagram .dv-control-label { fill:var(--color-blue); }
+.visual-diagram .dv-dot,.visual-diagram .dv-data-arrow { fill:var(--color-ink); }
+.visual-diagram .dv-control-dot,.visual-diagram .dv-control-arrow { fill:var(--color-blue); }
+.visual-diagram .dv-muted { opacity:.45; }
+.visual-diagram g.dv-muted { opacity:1; }
+.visual-diagram g.dv-muted .dv-wire,.visual-diagram g.dv-muted .dv-control { stroke:var(--color-rule-2); stroke-dasharray:3 5; }
+.visual-controls { display:flex; flex-wrap:wrap; gap:.75rem 1.5rem; margin-block:1rem; }
+.visual-controls label { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; font-size:.9rem; }
+.visual-controls select,.visual-controls button { min-height:44px; padding:.5rem .75rem; color:var(--color-ink); background:var(--color-paper); border:1px solid var(--color-rule-2); font:inherit; }
+.visual-controls button { cursor:pointer; }
+.visual-controls button[aria-pressed="true"] { color:var(--color-paper); background:var(--color-ink); }
+.visual-status { padding:.75rem 1rem; border-left:3px solid var(--color-blue); background:var(--color-paper-2); }
+@media print { .visual-diagram { min-width:0; } .visual-scroll { overflow:visible; } }
+.matrix-coordinate-example { display:flex; flex-wrap:wrap; align-items:center; gap:1.25rem; margin-block:1rem; }
+.matrix-number-grid { display:grid; grid-template-columns:repeat(2,3.5rem); margin-top:.5rem; }
+.matrix-number-grid span { display:grid; place-items:center; min-height:3.5rem; border:1px solid var(--color-rule-2); background:var(--color-paper); font-family:var(--font-mono); }
+.matrix-number-grid .matrix-selected { outline:3px solid var(--color-accent); outline-offset:-3px; font-weight:700; background:var(--color-paper-3); }
+.matrix-equals { font-size:1.5rem; }
