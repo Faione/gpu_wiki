@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 8：Kernel 的定义与启动 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/simd-warp.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script><link rel="stylesheet" href="../assets/css/concept-diagrams.css"></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="kernel-basics"><h2>附录 8：Kernel 的定义与启动</h2>
+<h3 id="kernel-definition">附8.1 函数定义与线程实例</h3>
+<p>在这里，<strong>kernel（核函数）是 GPU 并行计算的入口函数</strong>。它是一份程序代码，不是 GPU 核心、SM 或操作系统内核。以下采用 CUDA C++ 的 SIMT 模型：kernel 函数体描述每个线程执行什么，kernel launch（启动）指定线程如何分组以及传入什么参数。</p>
+<pre>// GPU 端：定义每个线程的工作
+__global__ void add_one(const int* input, int* output, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) output[i] = input[i] + 1;
+}
+
+// CPU 端：一次启动，1 个 Block，每块 64 个线程
+add_one&lt;&lt;&lt;1, 64&gt;&gt;&gt;(d_input, d_output, 64);</pre>
+<p><code>__global__</code> 标记可通过 kernel launch 启动的 GPU 入口；<code>&lt;&lt;&lt;1, 64&gt;&gt;&gt;</code> 是执行配置，圆括号中才是函数参数。<code>blockIdx.x</code> 是块编号，<code>blockDim.x</code> 是每块线程数，<code>threadIdx.x</code> 是块内线程编号。本例只有一个 Block，所以 <code>i</code> 依次为 0～63。</p>
+<figure class="experiment"><pre>一份 add_one 函数代码
+          ↓ 启动一次：1 个 Block × 64 个线程
+T0 执行该函数 → 处理元素 0
+T1 执行该函数 → 处理元素 1
+……
+T63 执行该函数 → 处理元素 63
+          ↓ 在 NVIDIA GPU 上组织执行
+一个 Block → 两个 Warp → 由承载该 Block 的 SM 执行</pre><figcaption>这是代码、执行实例与硬件承载的对应关系，不表示所有线程同一时刻执行，也不表示每个线程复制一份机器码或独占一个核心。</figcaption></figure>
+<p>普通函数调用通常由调用它的线程执行一次函数体；这里的一次 kernel 启动安排 64 个 GPU 线程各自执行同一函数体。再次启动同一个 kernel，可以换用不同参数和线程配置；kernel 函数与某一次启动不是同一个概念。</p>
+<p class="model-note">示例省略内存分配、数据传输和错误检查，假定两个指针指向 GPU 可访问的、足够容纳 64 个整数的数组。kernel 启动通常相对 CPU 异步，启动语句返回不代表 GPU 已完成；CPU 使用结果前需确保计算及必要的数据传输完成。参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/intro-to-cuda-cpp.html">CUDA：Kernel 定义与启动</a>。</p>
+<h3 id="kernel-compilation">附8.2 编译：分别生成主机代码与设备代码</h3>
+<p>一份 CUDA C++ 源文件可以同时包含 CPU 端代码和 GPU 核函数。<code>nvcc</code> 是组织编译流程的工具：主机部分由主机编译器生成 CPU 代码，设备部分生成 GPU 设备代码；主机代码中的 <code>&lt;&lt;&lt;...&gt;&gt;&gt;</code> 被转换为启动核函数所需的调用逻辑。</p>
+<div class="summary-table"><table><caption>设备代码的几种表示</caption><thead><tr><th scope="col">名称</th><th scope="col">含义</th></tr></thead><tbody><tr><th scope="row">PTX</th><td>面向虚拟指令集的中间表示，仍需转换为目标 GPU 的机器码；GPU 不直接执行 PTX 文本。</td></tr><tr><th scope="row">cubin</th><td>包含针对目标 GPU 架构生成的机器码及相关信息的设备二进制。机器指令的汇编表示常称为 SASS。</td></tr><tr><th scope="row">fatbinary</th><td>设备代码容器，可包含多个目标架构的 cubin 和／或 PTX，通常嵌入主机程序或库中。</td></tr></tbody></table></div>
+<figure class="experiment"><pre>CUDA C++ 源码
+    ├─ 主机部分 → 主机编译器 → CPU 机器码与启动逻辑
+    └─ 设备部分 → 设备编译流程
+                     ├─ 目标 GPU 机器码（cubin）
+                     └─ PTX 中间表示
+                              ↓ 打包设备代码
+                     fatbinary → 随程序或库分发</pre><figcaption>这是常见的离线编译流程，省略设备链接等步骤。编译选项决定保留哪些 cubin 或 PTX，并非每次都同时生成图中的所有产物。</figcaption></figure>
+<h3 id="kernel-loading">附8.3 加载：选择机器码或进行即时编译</h3>
+<p>运行时，CUDA 软件栈需要使设备代码可用于当前 GPU。若存在兼容的 cubin，可使用其中的机器码；需要使用 PTX 时，驱动可进行 JIT（即时编译），生成目标 GPU 的机器码。加载也可能按需延后，具体时机取决于配置和使用方式。</p>
+<p class="key-insight">编译、加载与启动不是同一件事。同一个 kernel 可以在代码加载后启动多次，不必每次重新编译或重新传送整份代码。驱动还可以缓存 JIT 生成的二进制，以减少重复编译。</p>
+<h3 id="kernel-submission">附8.4 启动：从 CPU 请求到 GPU 执行</h3>
+<p>CPU 执行 <code>add_one&lt;&lt;&lt;1, 64&gt;&gt;&gt;(d_input, d_output, 64)</code> 时，不是跳转到 GPU 指令地址，而是通过 CUDA 运行时和驱动提交执行工作。启动信息包括核函数、参数、Grid 与 Block 尺寸、动态共享内存大小和 stream；示例使用默认 stream，动态共享内存大小为零。</p>
+<p>启动信息的引用关系与主机／设备完成时序分别见<a href="../chapters/chapter-02.html#driver-objects">第三章 3.3</a>和<a href="../chapters/chapter-02.html#completion-order">3.7</a>。软件提交完整工作，SM 内部再选择 Warp 指令，两者不属于同一个调度层次。</p>
+<p>本例提交的是“一份代码由 64 个线程执行”的工作，不是 64 份机器码。核函数内部仍可能包含大量指令；<code>kernel launch</code> 也不是一次 Warp 指令发射。</p>
+<p>启动通常相对 CPU 异步。教学程序可以使用 <code>cudaDeviceSynchronize()</code> 等待此前提交到设备的工作完成并检查返回错误；更细粒度的等待可使用 stream 或 event。同步本身不将结果复制回 CPU，若结果位于设备内存，还需安排相应的数据传输。</p>
+<p class="model-note">参考：<a href="https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/">NVCC：CUDA 编译流程</a>、<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/cuda-platform.html">CUDA 平台：PTX、cubin 与 JIT 缓存</a>。以上以 CPU 启动 CUDA C++ SIMT kernel 为范围，不展开运行时源码编译、设备端启动或 CUDA Graph。</p>
+<h3 id="kernel-launch-example">附8.5 主机启动代码参考</h3><p>以 100 个整数加一为例，假定主机数组 h_in、h_out 均可容纳 100 个 int，h_in 已初始化，并包含必要 CUDA 头文件。设备函数放在文件作用域，主机语句放在主机函数中；以下省略 API 错误处理，未作为完整程序编译运行。</p><pre><code>// 设备代码：描述每个逻辑线程的行为
+__global__ void add_one(const int* input, int* output, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) output[i] = input[i] + 1;
+}
+
+// 主机代码：申请数据资源，提交计算，读取结果
+const int n = 100;
+const size_t bytes = n * sizeof(int);
+int *d_in, *d_out;
+cudaMalloc((void**)&amp;d_in, bytes);
+cudaMalloc((void**)&amp;d_out, bytes);
+cudaMemcpy(d_in, h_in, bytes, cudaMemcpyHostToDevice);
+
+const int threads = 64;
+const int blocks = (n + threads - 1) / threads;
+add_one&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(d_in, d_out, n);
+cudaGetLastError();       // 实际程序应检查返回值
+cudaDeviceSynchronize(); // 等待并检查异步执行结果
+cudaMemcpy(h_out, d_out, bytes, cudaMemcpyDeviceToHost);
+
+cudaFree(d_out);
+cudaFree(d_in);</code></pre><details><summary>使用 Driver API 时，启动信息如何显式表达？</summary>
+<p>以下为结构性片段：假定已初始化驱动并设置当前上下文，<code>d_in</code>、<code>d_out</code> 为已准备好的 CUdeviceptr，<code>stream</code> 为该上下文中的 Stream。假定模块导出了名为 <code>add_one</code> 的入口（可用 <code>extern "C"</code> 避免 C++ 名称改编）。</p>
+<pre><code>CUmodule module;
+CUfunction function;
+cuModuleLoad(&amp;module, "add_one.ptx");
+cuModuleGetFunction(&amp;function, module, "add_one");
+int count = 100;
+void* args[] = { &amp;d_in, &amp;d_out, &amp;count };
+cuLaunchKernel(function,
+               2, 1, 1,      // Grid：2 个 Block
+               64, 1, 1,     // 每个 Block：64 个线程
+               0, stream,    // 动态共享内存字节数、Stream
+               args, nullptr);
+cuStreamSynchronize(stream);</code></pre>
+<p><code>args</code> 中保存的是主机端参数变量的地址，API 据此读取参数值；这里的设备指针值会作为核函数参数传入，指针所指的整个数组不会因为这一参数传递而自动复制。模块、Stream 和设备分配还需在不再使用时释放。</p>
+<p class="model-note">参考：<a href="https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__EXEC.html">cuLaunchKernel 参数约定</a>。</p></details></section></main></body></html>

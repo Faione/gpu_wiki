@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 9：SIMD：向量、lane 与向量化 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/simd-warp.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="background"><h2>附录 9：SIMD：向量、lane 与向量化</h2><h3 id="simd-instruction">附9.1 标量指令与向量指令</h3><p>标量加法指令处理一对标量操作数。SIMD（Single Instruction, Multiple Data，单指令多数据）则让一条指令对多个数据元素执行相同操作。例如，一个 128 位向量可容纳四个 32 位整数，一条向量加法可对四个位置分别求和。</p>
+  <figure class="experiment"><div class="mapping-controls" role="group" aria-label="指令形式"><button data-mode="scalar" aria-pressed="true">标量加法</button><button data-mode="simd" aria-pressed="false">4 元素 SIMD 加法</button><button id="vector-step">执行下一条</button><button id="vector-reset">重置</button></div><div class="instruction" id="vector-instruction"></div><div class="vector-grid" id="vector-grid"></div><figcaption id="vector-status" aria-live="polite"></figcaption></figure>
+  <p>图中的 lane 表示向量中的元素位置。四个 lane 属于同一个 CPU 线程的一次向量操作，并不表示四个 CPU 线程。图示只计加法指令，省略数据加载和循环控制；指令条数不能直接换算为运行时间。</p>
+  <h3 id="simd-lanes">附9.2 向量寄存器与 lane</h3>
+<p>lane 0、lane 1 等表示向量中的元素位置。128 位向量按 32 位整数解释时含四个 lane；按 16 位整数解释时可含八个。lane 数与数据类型有关，不是固定的线程数或核心数。</p>
+<figure class="experiment"><pre>位置        lane 0   lane 1   lane 2   lane 3
+输入 A          1        2        3        4
+输入 B         10       20       30       40
+                ↓        ↓        ↓        ↓
+向量加法       11       22       33       44</pre><figcaption>每个位置处理对应的数据。一条向量指令不要求每个位置拥有永久独占的加法器，也不保证单周期完成。这里采用固定宽度示例，不涵盖全部向量架构。</figcaption></figure>
+<h3 id="simd-usage">附9.3 典型场景与向量化</h3>
+<p>图像亮度调整、音频增益、数组逐元素运算以及批量比较，都包含对多份数据重复执行相同操作的工作。例如：</p>
+<pre>for (int i = 0; i &lt; n; ++i)
+    c[i] = a[i] + b[i];</pre>
+<p>编译器若将若干次循环迭代组合为向量加载、向量加法与向量存储，就是自动向量化；开发者也可通过向量内建函数等方式显式表达。尾部不足一个向量的数据，可通过掩码或标量代码处理，具体取决于指令集和编译器。</p>
+<p class="key-insight">数学上的向量计算描述任务，SIMD 描述执行方式。同一个向量加法可以用标量循环、SIMD 指令或 GPU 上的 SIMT 实现；数组类型及源码中的向量写法本身不能证明使用了 SIMD。</p>
+<h3 id="simd-conditions">附9.4 条件执行与适用限制</h3>
+<p>支持掩码的 SIMD 指令可以只让部分元素参与；其他实现可用计算后选择等方式处理逐元素条件。程序或编译器负责将这些条件组织为向量操作。SIMD lane 本身没有独立线程的程序计数器和调用栈。</p>
+<p>SIMD 的收益依赖可成组处理的工作、有效的数据供给和足够的参与元素。循环依赖、复杂选路或分散访存可能限制向量化收益；数据连续通常有利，但不是 SIMD 的定义条件。支持 gather/scatter 的指令也能处理部分非连续访问。</p>
+<p class="model-note">参考：<a href="https://www.intel.com/content/www/us/en/developer/articles/technical/improve-performance-with-vectorization.html">Intel：向量化与 SIMD</a>、<a href="https://www.intel.com/content/www/us/en/developer/articles/technical/fortran-array-data-and-arguments-and-vectorization.html">Intel：访问布局与 gather/scatter</a>。</p>
+</section></main></body></html>

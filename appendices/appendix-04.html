@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 4：线程配置、编号与设计依据 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/app.js" defer></script><script src="../assets/js/learning-figures.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section class="appendix-chapter" id="appendix-configuration" data-title="附4 配置、编号与设计依据"><h2>附录 4：线程配置、编号与设计依据</h2>
+<div id="warp-programming" data-title="附4.1 可配置的 Block 与固定的 Warp" data-keywords="编程 配置 自定义 warp block cooperative groups">
+<h3>附4.1 可配置的 Block 与固定的 Warp</h3>
+<p>开发者知道算法希望如何组织工作，因此 CUDA 允许程序在硬件限制内配置 Block 的数量、大小和形状。Warp 则采用架构规定的执行分组规则：程序配置 Block 后，Warp 的成员随之确定，不能另行任意指定宽度或拼接成员。</p>
+<pre class="dependency-chain">kernel&lt;&lt;&lt;2, 64&gt;&gt;&gt;(...);  // 2 个 Block，每块 64 个线程
+
+B0：W0 = 块内线程 0～31；W1 = 块内线程 32～63
+B1：W0 = 块内线程 0～31；W1 = 块内线程 32～63</pre>
+<p>程序可以计算 Warp 编号，再给不同 Warp 安排不同工作，也可以使用组内交换、投票或同步操作。这是在利用已有分组，而非重新定义分组。Cooperative Groups 创建的软件协作子组同样不会改变硬件 Warp 的宽度与成员。</p>
+<p>两者分开配置的理由是：算法的工作组大小需要灵活，而调度、活跃掩码及操作数供给等机制需要明确的执行单位。固定 Warp 规则提供了稳定的组织基础；这是一种架构选择，不表示可变分组在技术上不可能。</p>
+</div>
+<div id="warp-numbering" data-title="附4.2 Warp 的编号与划分规则" data-keywords="warp lane threadIdx 32 编号 二维 三维 尾组">
+<h3>附4.2 Warp 的编号与划分规则</h3>
+<p>NVIDIA 按每个 Block 内的线性线程编号，从 0 开始，每连续 32 个线程划为一个 Warp，不跨 Block。编号由线程坐标决定，不由数据地址、分支路径或当前任务决定。</p>
+<pre class="dependency-chain">// 将块内坐标线性化：x 最快变化，其次 y，最后 z
+tid = threadIdx.x
+    + blockDim.x * threadIdx.y
+    + blockDim.x * blockDim.y * threadIdx.z;
+
+warp_id = tid / 32;  // 整数除法，得到块内 Warp 编号
+lane_id = tid % 32;  // Warp 内位置，范围 0～31</pre>
+<p>一维 Block 中，tid 就是 threadIdx.x。以下两个例子分别说明尾组不满，以及二维坐标与 Warp 的对应关系：</p>
+<figure class="learning-figure"><div class="table-scroll"><table class="comparison"><caption>表 附4-1 · 不同 Block 形状下的 Warp 划分</caption><thead><tr><th scope="col">Block 配置</th><th scope="col">Warp</th><th scope="col">块内线程范围</th></tr></thead><tbody><tr><th scope="row" rowspan="3">一维：80 个线程</th><td>W0</td><td>tid 0～31：32 个线程</td></tr><tr><td>W1</td><td>tid 32～63：32 个线程</td></tr><tr><td>W2</td><td>tid 64～79：16 个线程，其余位置无对应线程</td></tr><tr><th scope="row" rowspan="2">二维：dim3(16, 4)</th><td>W0</td><td>y = 0、1 两行，各含 x = 0～15；tid 0～31</td></tr><tr><td>W1</td><td>y = 2、3 两行，各含 x = 0～15；tid 32～63</td></tr></tbody></table></div><figcaption>每行 16 个线程时，一个 Warp 跨两行。一维 80 线程块的尾 Warp 不能由其他 Block 的线程补满。两例均描述逻辑编号，不是物理布线。</figcaption></figure>
+<p>每块 Warp 数为线程总数除以 32 后向上取整。Block 大小取 32 的倍数可避免因块大小导致的尾组不满，但不保证性能最优，也不能避免分支导致的部分线程不活跃。</p>
+</div>
+<div id="warp-design-rationale" data-title="附4.3 编号约定与设计依据" data-keywords="理论依据 32 固定宽度 连续编号 线性化 设计取舍">
+<h3>附4.3 编号约定与设计依据</h3>
+<p><strong>规则是确定的，最优性不是定理。</strong>CUDA 明确规定 Warp 宽度及线程线性化方式，但这不意味着数学理论证明了“32 个线程、连续分组、x 优先”是唯一最优方案。以下是理解这些选择的工程分析，而非对具体芯片设计历史的断言。</p>
+<ul><li><strong>固定宽度：</strong>便于围绕稳定的组内位置设计掩码、调度和组内通信。更宽的组可分摊控制开销，但也可能在分支不一致或工作不足时留下更多不参与的位置；收益取决于工作负载与实现。</li><li><strong>连续编号：</strong>组号和组内位置可直接由除法、取余求出；对非负编号，除以 32 等价于右移 5 位，取余等价于保留低 5 位。这使映射易于计算和预测，不代表硬件不存在其他映射或状态管理。</li><li><strong>x 优先：</strong>这是坐标线性化约定，不是物理定律。程序若让相邻编号访问相邻地址，可能有利于内存访问合并；编号连续本身不保证地址连续或最佳访存效率。</li></ul>
+<p class="key-insight">程序配置工作组，硬件按架构规则形成执行组，程序再根据已知规则安排工作与数据。规则可以被利用，但不能把软件子组、数据划分或物理加法器数量当作 Warp 的定义。</p>
+<p>参考：<a href="https://docs.nvidia.com/cuda/archive/13.0.2/cuda-c-programming-guide/index.html">CUDA 指南：线程编号与 SIMT</a>、<a href="https://developer.nvidia.com/blog/cooperative-groups/">Cooperative Groups</a>、<a href="https://www.intel.com/content/www/us/en/developer/articles/guide/hyper-thread-tuning-guide-for-video-ai-workload.html">Intel SMT 资源共享说明</a>。</p>
+</div>
+</section></main></body></html>

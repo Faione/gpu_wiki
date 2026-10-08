@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 18：CPU 机制与资源预算复习 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/driver-chapter.css?v=2"><link rel="stylesheet" href="../assets/css/hardware-chapter.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/app.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">知识地图 ↗</a></header><main class="supplement-body" id="top"><section id="cpu-reference"><h2>附录 18：CPU 机制与资源预算复习</h2><p>本篇保留早期学习中的 CPU 复习与预算实验，已有基础时无需顺序阅读。</p><h3 id="cpu-budget">附18.1 控制、缓存与资源取舍</h3><div class="guided-example" id="control-cache" data-title="控制逻辑与缓存的关系" data-keywords="control cache 控制 缓存 预算">
+        <h4>控制逻辑与缓存：功能不同，目标互补</h4>
+        <p>下方预算图中的“控制”指处理器的指令控制与调度逻辑，例如取指、译码、依赖检查、指令发射与分支预测。其作用是组织指令的执行。“缓存”指保存指令或数据副本的存储结构，其作用是利用局部性减少对较远存储层级的访问。两者属于不同功能类别。</p>
+        <div class="example-comparison">
+          <p><strong>控制逻辑：组织指令何时执行</strong><br>例如，某条加载指令等待数据时，乱序调度逻辑可以选择操作数已就绪的独立指令执行。它改变指令的执行安排，并不直接缩短该次存储访问的服务时间。</p>
+          <p><strong>缓存：提供所需指令或数据</strong><br>例如，加载 x[i] 时若命中较近的缓存层级，通常能比访问较远层级更早获得数据。缓存命中缩短该次访问等待，但不负责选择下一条算术指令。</p>
+        </div>
+        <p><strong>在同一条依赖链中的联系：</strong>对于 <code>load x[i] → multiply</code>，缓存访问结果影响 x[i] 何时就绪，进而影响依赖乘法何时具备执行条件。等待期间，调度逻辑可能发射独立的 <code>z = a + b</code>。数据返回后，相关就绪状态更新，乘法才成为可发射的候选指令。</p>
+        <p class="key-insight">本节将控制与缓存归入同一预算类别，以说明它们与算术资源之间的分配关系。复杂控制逻辑与较大的缓存都可能减少单线程停顿，并占用芯片面积与功耗预算；实际设计中，这两类资源可以独立配置，其容量和比例取决于工作负载与设计目标。</p>
+        <details><summary>缓存控制器与指令调度逻辑</summary><p>缓存自身也需要控制逻辑，用于处理命中判断、缺失请求、替换和写回等事务。因此“控制逻辑”是一个范围较广的词。本图将核心的指令控制与调度功能简称为“控制”，而“Cache”表示缓存子系统；这是一种功能示意，并非完整、互斥的晶体管面积分类。CPU 与 GPU 都包含控制逻辑和缓存。</p></details>
+      </div><div class="guided-example" id="budget-performance" data-title="资源投入如何影响延迟与吞吐量" data-keywords="预算 单线程 响应 吞吐 性能 CPI">
+        <h4>从资源投入到性能：中间机制与成立条件</h4>
+        <p>增加控制或缓存资源，并不会直接使一次加法运算更快。它们主要通过减少指令流中的停顿，或增加独立指令的交叠执行，影响任务完成时间。</p>
+        <h4>1. 单线程时间取决于计算与未被覆盖的等待</h4>
+        <p>对固定指令序列，执行时间可写为 <code>T = 指令数 × 平均 CPI / 时钟频率</code>。CPI 是平均每条指令所需的周期数，包含依赖、访存和控制流等因素造成的有效停顿；多条指令交叠执行时，平均 CPI 可以小于 1。讨论以下机制时，暂时固定指令数与频率。</p>
+        <ul>
+          <li><strong>更大的缓存：</strong>如果新增容量保留了原本会被淘汰、随后又被使用的数据，缓存缺失可能减少，依赖这些数据的指令因而更早就绪。链条为：容量增加 → 部分缺失转为命中 → 有效访存等待减少 → 执行时间可能缩短。</li>
+          <li><strong>更大的乱序窗口：</strong>处理器可以在更大范围内发现独立指令，并将其安排在等待期间执行。链条为：候选指令范围扩大 → 可利用 ILP 增加 → 部分等待被覆盖 → 执行时间可能缩短。若窗口内仍是同一条依赖链，收益可能很小。</li>
+          <li><strong>更准确的分支预测：</strong>错误路径上的推测执行和恢复次数可能减少，有效执行周期随之减少。预测结构增加并不保证准确率提高，实际收益取决于程序的分支行为。</li>
+        </ul>
+        <p><strong>时间示例：</strong>某任务的简化执行过程包含 20 周期计算与 80 周期未被覆盖的访存等待，共 100 周期。若缓存改善使后者降为 20 周期，总时间变为 40 周期，而计算仍需 20 周期。两组数字仅说明等待对总时间的影响，不对应具体芯片。</p>
+        <h4>2. 并行资源的减少来自预算约束</h4>
+        <p>在工艺、总面积与功耗约束近似固定时，更多预算用于控制和缓存，意味着留给算术执行资源等其他部分的预算可能减少。本图将这部分取舍简化为算术方块数量减少。这是资源分配约束，不能理解为缓存会直接降低运算吞吐量。</p>
+        <p>在运算类型、频率与每通道执行能力固定的近似模型中，<code>算术吞吐上限 = 通道数 × 每通道每周期操作数 × 频率</code>。更多通道可以提高这一上限，但需要足够的独立任务、指令供给和数据带宽。只有一个串行任务时，增加通道通常无法利用全部新增资源。</p>
+        <h4>3. 实际吞吐量还取决于利用率</h4>
+        <p>以算术操作数为工作量单位，可用 <code>实际吞吐量 ≈ 算术吞吐上限 × 有效利用率</code> 理解二者的关系。假设每通道每周期最多执行 1 次操作：16 个通道若只有 25% 有效利用率，平均为 4 次操作 / 周期；8 个通道若达到 75%，平均为 6 次操作 / 周期。这说明较少的通道也可能产生更高的实际吞吐量。</p>
+        <p class="key-insight">控制与缓存投入可能减少单线程停顿，也可能提高整个处理器的有效利用率。因此，单线程性能与实际吞吐量并非必然反向变化。预算分配图只描述资源配置；单线程时间与实际吞吐量仍需结合工作负载分析。</p>
+        <details><summary>增加投入但性能未改善的情况</summary><p>数据原本已能放入缓存时，继续增加容量可能不减少缺失；更大的缓存也可能增加命中延迟。长依赖链限制乱序窗口能够利用的 ILP。内存带宽已饱和时，新增算术通道可能持续等待数据。实际设计还需考虑频率、布线和功耗的变化，不能从单一资源的增加推导性能必然提高。</p></details>
+      </div><p class="experiment-prompt"><b>实验说明：</b>滑块显示固定 42 个示意预算单元的分配：左移增加算术资源，右移同时增加控制与缓存资源。单元不代表真实面积或功耗，两类资源的联动是本图设定。下方读数显示资源数量，实际性能需要结合上述机制与工作负载分析。</p><div class="workbench">
+        <div class="control-pane">
+<label for="core-complexity">控制与缓存投入倾向 <output id="complexity-output">72</output></label>
+          <input id="core-complexity" type="range" min="15" max="85" value="72" aria-describedby="budget-scope">
+          <p id="budget-scope" class="model-note">合并预算示意：控制负责指令组织，缓存负责指令与数据存储；两者可分别设计。</p>
+          <div class="control-scale"><span>更多简单核心</span><span>更少复杂核心</span></div>
+          <div class="readout-grid">
+            <div><small>控制与缓存预算单元</small><strong id="latency-score">—</strong></div>
+            <div><small>算术预算单元</small><strong id="throughput-score">—</strong></div>
+          </div>
+          <p class="model-note" id="tradeoff-note" aria-live="polite">资源配置的收益取决于任务独立性、缓存局部性与当前瓶颈。</p>
+        </div>
+        <div class="silicon" id="silicon-map" aria-label="概念化芯片资源图"></div>
+      </div>
+<h3 id="cpu-mechanisms">附18.2 CPU 机制对照</h3><div class="guided-example"><h4>访存等待：缓存缩短操作数获取时间</h4><p>如果 x[i] 命中较近的缓存层级，加载通常更早完成，依赖乘法也更早就绪。缓存改善的是访问过程；若仍然缺失，等待可能继续存在。</p><h4>数据依赖：乱序执行利用同线程的独立指令</h4><p>调度逻辑记录指令的依赖与就绪状态。乘法等待期间，可将独立的 z = a + b 提前执行，结果仍按体系结构要求提交。乱序执行改变执行安排，不能使依赖 x[i] 的乘法绕过真实依赖。</p><h4>线程内独立性不足：SMT 扩展指令来源</h4><p>同一物理核心保存多个硬件线程的状态，从其他线程中选择符合条件的指令使用空闲资源。线程之间仍共享硬件，SMT 的收益取决于这些资源是否存在互补的空闲机会。</p><h4>控制路径未确定：分支预测与推测执行</h4><p>分支预测提供可能的下一取指位置，推测执行沿预测路径提前处理指令。预测正确时可减少等待分支解析的影响；预测错误时需要丢弃错误路径结果并恢复状态。它们的作用不同于缩短访存时间，也不消除真实数据依赖。</p></div><p>下方选项将各机制对应到数组计算中的具体执行条件。</p><div class="cpu-machine">
+        <div class="mechanism-tabs" role="tablist" aria-label="CPU 延迟隐藏机制">
+          <button role="tab" aria-selected="true" data-cpu="ooo">OoO</button>
+          <button role="tab" aria-selected="false" data-cpu="speculation">Speculation</button>
+          <button role="tab" aria-selected="false" data-cpu="branch">Branch Prediction</button>
+          <button role="tab" aria-selected="false" data-cpu="cache">Cache</button>
+          <button role="tab" aria-selected="false" data-cpu="smt">SMT</button>
+        </div>
+<div class="mechanism-example" id="cpu-example"></div>
+        <div class="mechanism-copy" aria-live="polite"><h4 id="cpu-title">乱序执行 · Out-of-Order Execution</h4><p id="cpu-copy">当较早的指令等待数据时，处理器从窗口中挑选已就绪且无依赖的后续指令执行；提交通常仍保持程序顺序，以维护精确状态。</p></div>
+      </div><p><a href="../chapters/chapter-01.html#cpu-latency">返回第一章依赖与就绪 →</a></p></section></main></body></html>

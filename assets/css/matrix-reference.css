@@ -1,0 +1,6 @@
+#matrix-instructions .table-scroll { max-width:100%; overflow-x:auto; margin-block:1.5rem; }
+#matrix-instructions .comparison { width:100%; min-width:560px; border-collapse:collapse; font-size:.9rem; }
+#matrix-instructions .comparison th,#matrix-instructions .comparison td { padding:.8rem; border:1px solid var(--color-rule); text-align:left; vertical-align:top; }
+#matrix-instructions .comparison th { background:var(--color-paper-2); }
+#matrix-instructions .comparison caption { text-align:left; font-weight:700; margin-bottom:.75rem; }
+#matrix-instructions pre { padding:1rem; border-left:3px solid var(--color-rule-2); background:var(--color-paper-2); line-height:1.65; }

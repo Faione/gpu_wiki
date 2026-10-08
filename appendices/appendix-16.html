@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 16：计算部件与教学电路 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/driver-chapter.css?v=2"><link rel="stylesheet" href="../assets/css/hardware-chapter.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/hardware-chapter.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">知识地图 ↗</a></header><main class="supplement-body" id="top"><section id="compute-circuits"><h2>附录 16：计算部件与教学电路</h2><p>本篇按需查阅，用于解释状态如何保存、算术操作怎样由电路完成。阅读算子优化主线不要求掌握门级实现。</p>
+<h3 id="circuit-add">附16.1 一位加法器</h3><figure class="learning-figure" id="adder-circuit" data-title="一位全加器"><h4>图 附16-1 · 从逻辑门到一位整数加法</h4>
+<p>以<strong>无符号整数的一位加法</strong>说明组合逻辑。A、B 是两个输入位，Cin 是低一位传来的进位；输出 S 是本位结果，Cout 是送给高一位的进位。XOR（异或）在两输入不同时输出 1；AND（与）在两输入都为 1 时输出 1；OR（或）在至少一个输入为 1 时输出 1。</p>
+<div class="circuit-controls" aria-label="全加器输入"><button type="button" data-adder-bit="a" aria-pressed="false">A = 0</button><button type="button" data-adder-bit="b" aria-pressed="false">B = 0</button><button type="button" data-adder-bit="cin" aria-pressed="false">Cin = 0</button></div>
+<div class="circuit-scroll" role="region" aria-label="一位全加器电路，可横向滚动" tabindex="0">
+<svg class="circuit-svg" viewBox="0 0 760 330" role="img" aria-labelledby="adder-title adder-desc"><title id="adder-title">两个异或门、两个与门和一个或门组成全加器</title><desc id="adder-desc">P 等于 A 异或 B，S 等于 P 异或 Cin。G 等于 A 与 B，H 等于 P 与 Cin，Cout 等于 G 或 H。同名信号表示同一条逻辑连接。</desc>
+<g class="wire" data-net="a"><path d="M70 55 H140"/></g><g class="wire" data-net="b"><path d="M70 95 H140"/></g>
+<rect class="gate" x="140" y="40" width="100" height="70"/><text x="190" y="80" text-anchor="middle">XOR</text>
+<g class="wire" data-net="p"><path d="M240 75 H400"/></g><text x="285" y="60">P</text>
+<g class="wire" data-net="cin"><path d="M325 115 H400"/></g><rect class="gate" x="400" y="60" width="100" height="70"/><text x="450" y="100" text-anchor="middle">XOR</text>
+<g class="wire" data-net="s"><path d="M500 95 H630"/></g><text x="645" y="100" id="adder-s">S = 0</text>
+<text x="25" y="60">A</text><text x="25" y="100">B</text><text x="277" y="120">Cin</text>
+<g class="wire" data-net="a"><path d="M70 195 H140"/></g><g class="wire" data-net="b"><path d="M70 235 H140"/></g>
+<text x="25" y="200">A</text><text x="25" y="240">B</text><rect class="gate" x="140" y="180" width="100" height="70"/><text x="190" y="220" text-anchor="middle">AND</text>
+<g class="wire" data-net="g"><path d="M240 215 H510 V210 H550"/></g><text x="275" y="200">G</text>
+<g class="wire" data-net="p"><path d="M325 260 H365"/></g><g class="wire" data-net="cin"><path d="M325 300 H365"/></g><text x="280" y="265">P</text><text x="277" y="305">Cin</text>
+<rect class="gate" x="365" y="245" width="100" height="70"/><text x="415" y="285" text-anchor="middle">AND</text>
+<g class="wire" data-net="h"><path d="M465 280 H515 V250 H550"/></g><text x="478" y="304">H</text>
+<rect class="gate" x="550" y="195" width="80" height="70"/><text x="590" y="235" text-anchor="middle">OR</text><g class="wire" data-net="cout"><path d="M630 230 H655"/></g><text x="665" y="235" id="adder-cout">Cout = 0</text>
+</svg></div><p class="circuit-readout" id="adder-result" aria-live="polite">0 + 0 + 0 = 0，S = 0，Cout = 0。</p>
+<p><code>P = A XOR B；S = P XOR Cin；Cout = (A AND B) OR (P AND Cin)</code>。点击输入按钮可切换 0／1；绿色连线表示逻辑 1，灰色表示 0，文字输出给出相同信息。</p>
+<div class="arch-node"><strong>扩展到多位：最低位全加器 → 进位 → 下一位全加器 → …</strong><span>例如 0011 + 0001 = 0100。每一位产生本位和，并把进位交给高一位。</span></div>
+<figcaption>矩形采用功能名称表示逻辑门，同名输入是同一信号，不是新增变量。级联形成的是教学用行波进位加法器；真实 GPU 可使用更复杂的快速进位与流水线设计。浮点加法还需处理指数、对阶、规格化与舍入，不能直接等同于该整数电路。</figcaption></figure>
+<h3 id="circuit-control">附16.2 共同控制与独立数据</h3><figure class="learning-figure" id="shared-control-circuit" data-title="共同控制与独立数据"><h4>图 附16-2 · 共同控制信号，独立的数据通路</h4><p>多路选择器（MUX）根据选择信号，从多个输入中选出一个输出。下图给每条通路准备 ADD 与 AND 两种结果，由共同的 op 选择运算结果：op = 0 选加法，op = 1 选按位与。</p>
+<div class="circuit-scroll" role="region" aria-label="两条数据通路共享操作选择信号" tabindex="0"><svg class="circuit-svg" viewBox="0 0 760 370" role="img" aria-labelledby="lanes-title lanes-desc"><title id="lanes-title">两个简化运算通路共享 op，输入与输出分别独立</title><desc id="lanes-desc">线程零数据 3 和 1 分别进入加法器和按位与单元，由 MUX 选择结果；线程一数据 6 和 1 做同样操作。共同的 op 控制两个 MUX，不传输操作数。</desc>
+<rect class="gate" x="235" y="10" width="270" height="45"/><text x="370" y="39" text-anchor="middle">指令译码：产生共同 op</text><path class="control-wire" d="M505 33 H585 V285 M585 145 H550 M585 285 H550"/>
+<text x="600" y="82">虚线：控制</text><text x="24" y="93">数据通路 0</text><text x="24" y="133">A₀ = 3，B₀ = 1</text><path class="wire" d="M170 125 H220 V105 H265 M220 125 V160 H265"/><circle class="junction" cx="220" cy="125" r="4"/>
+<rect class="gate" x="265" y="85" width="130" height="40"/><text x="330" y="112" text-anchor="middle">ADD：4</text><rect class="gate" x="265" y="140" width="130" height="40"/><text x="330" y="167" text-anchor="middle">AND：1</text><path class="wire" d="M395 105 H465 M395 160 H465"/><path class="gate" d="M465 85 L550 108 V157 L465 180 Z"/><text x="490" y="140">MUX</text><path class="wire" d="M550 130 H635"/><text x="646" y="135">结果 R₀</text>
+<text x="24" y="233">数据通路 1</text><text x="24" y="273">A₁ = 6，B₁ = 1</text><path class="wire" d="M170 265 H220 V245 H265 M220 265 V300 H265"/><circle class="junction" cx="220" cy="265" r="4"/>
+<rect class="gate" x="265" y="225" width="130" height="40"/><text x="330" y="252" text-anchor="middle">ADD：7</text><rect class="gate" x="265" y="280" width="130" height="40"/><text x="330" y="307" text-anchor="middle">AND：0</text><path class="wire" d="M395 245 H465 M395 300 H465"/><path class="gate" d="M465 225 L550 248 V297 L465 320 Z"/><text x="490" y="280">MUX</text><path class="wire" d="M550 270 H635"/><text x="646" y="275">结果 R₁</text><text x="25" y="355">实线：操作数与结果（多位数据）；圆点：连接分支。</text>
+</svg></div><figcaption>这是两通路、两种操作的组合电路示意。共享 op 不要求两条通路共享操作数，也不意味着一个 Warp 永久占用一组固定运算单元。实际 GPU 的不同操作可能分属不同流水线，不必同时计算所有候选结果再选择。</figcaption></figure>
+<h3 id="circuit-state">附16.3 状态保留</h3><figure class="learning-figure" id="register-circuit" data-title="状态保留与写使能"><h4>图 附16-3 · 一个数据位如何保留或更新</h4><p>逻辑门的组合只计算当前输入的结果；保留线程状态还需要存储单元。下图用一个 D 触发器表示一位状态：在有效时钟沿到达时，D 输入成为新的 Q 输出。MUX 决定送入新值，还是把旧值送回去。</p>
+<div class="circuit-scroll" role="region" aria-label="写使能控制一位状态的更新或保留" tabindex="0"><svg class="circuit-svg" viewBox="0 0 760 350" role="img" aria-labelledby="register-title register-desc"><title id="register-title">写使能、多路选择器与触发器组成一位可保持状态</title><desc id="register-desc">有效写回和线程参与条件经与门生成 WE。WE 为一时 MUX 选择新结果，为零时选择旧 Q；有效时钟沿将所选输入保存到触发器。</desc>
+<text x="20" y="35">有效写回</text><text x="20" y="75">线程参与</text><path class="wire" d="M125 30 H180 M125 70 H180"/><rect class="gate" x="180" y="15" width="95" height="70"/><text x="227" y="56" text-anchor="middle">AND</text><path class="control-wire" d="M275 50 H340 V180"/><text x="292" y="35">WE</text>
+<text x="20" y="150">新结果（1 位）</text><path class="wire" d="M160 145 H280"/>
+<path class="gate" d="M280 120 L380 145 V215 L280 240 Z"/><text x="294" y="153">1</text><text x="294" y="222">0</text><text x="325" y="203">MUX</text>
+<path class="wire" d="M380 180 H465"/><rect class="gate" x="465" y="130" width="125" height="110"/><text x="479" y="184">D</text><text x="562" y="184">Q</text><text x="527" y="156" text-anchor="middle">触发器</text><path class="wire" d="M465 210 L478 220 L465 230 M410 220 H465"/><text x="398" y="252">时钟</text>
+<path class="wire" d="M590 180 H705 M635 180 V295 H240 V220 H280"/><circle class="junction" cx="635" cy="180" r="4"/><text x="660" y="163">已保存 Q</text><text x="285" y="322">旧值反馈：WE = 0 时，下一时钟沿仍保存原值</text>
+</svg></div><p><code>WE = 有效写回 AND 线程参与</code>；<code>Q_next = WE ? 新结果 : Q</code>。选中某个 Warp 执行并不会清空其他 Warp 的数据；未被更新的状态继续由存储电路保留。</p><figcaption>该图用一位触发器解释“保存状态”的逻辑，不声称 GPU 的寄存器文件由这种电路逐位搭建。实际寄存器文件通常采用专门的存储阵列、地址译码与读写端口；每个线程的寄存器标识需映射到相应物理存储位置。写使能示例仅讨论寄存器，不涵盖内存存储的全部副作用。</figcaption></figure>
+<h3 id="circuit-comparison">附16.4 CPU 与 GPU 部件对照</h3><div id="cpu-gpu-compute" data-title="CPU 与 GPU 计算部件对照">
+<p>CPU 同样具有整数加法器、乘法器、浮点单元和向量执行资源。GPU 的主要变化是<strong>在多个 SM 中配置大量并行算术资源，用共同指令处理多份线程数据，并为矩阵等规则运算配置专用单元</strong>。这不是在 CPU 后面简单附加一种“GPU 加法器”。</p>
+<figure class="learning-figure"><h4>图 附16-4 · CPU 核心与 GPU SM 的功能模块对照</h4>
+<div class="arch-grid">
+<div class="arch-region"><h5>一个典型高性能 CPU 核心</h5><div class="arch-node"><strong>取指、预测、乱序调度</strong><span>从单个或少量硬件线程寻找可执行指令</span></div><div class="arch-connector">↓ 选择就绪指令，读取操作数</div><div class="arch-node"><strong>整数执行资源</strong><span>加／减、逻辑、移位；乘法等可能使用其他流水线</span></div><div class="arch-connector">与其他执行资源并列</div><div class="arch-node"><strong>浮点／SIMD 向量资源</strong><span>标量或向量加法、乘法、FMA 等</span></div><div class="arch-connector">部分 CPU 还配置</div><div class="arch-node"><strong>矩阵扩展</strong><span>例如支持 AMX 的 Intel Xeon；并非所有 CPU 都有</span></div></div>
+<div class="arch-region arch-hardware"><h5>一个 GPU SM（功能概览）</h5><div class="arch-node"><strong>Warp 调度与发射</strong><span>从多个驻留 Warp 选择就绪指令</span></div><div class="arch-connector">↓ 指令交给相应流水线</div><div class="arch-node"><strong>成组整数／浮点运算资源</strong><span>INT、FP32、FP64 等，处理活跃线程的各份数据</span></div><div class="arch-connector">与通用运算资源并列</div><div class="arch-grid"><div class="arch-node"><strong>特殊函数资源</strong><span>部分倒数、平方根倒数等近似操作</span></div><div class="arch-node"><strong>Tensor Core</strong><span>受支持的矩阵乘加操作</span></div></div><p class="arch-caption">整颗 GPU 配置多个 SM；不同产品的资源比例和支持类型不同。</p></div>
+</div><figcaption>这是组织方式对比，不是等面积、等功耗或单元数量对比。CPU 核心与 SM 不能直接一比一换算；图中省略寄存器、缓存及加载／存储资源，不表示这些部件不存在。</figcaption></figure>
+<div class="summary-table"><table><caption>共同基础与 GPU 的扩展方向</caption><thead><tr><th>部件</th><th>CPU 是否具有</th><th>GPU 的配置与作用</th></tr></thead><tbody>
+<tr><td>整数 ALU／加法器</td><td>有，用于整数计算、逻辑处理等</td><td>为大量线程提供并行整数运算；线程索引与地址计算也需要这些能力</td></tr>
+<tr><td>浮点加法、乘法与 FMA</td><td>有，常同时支持标量及 SIMD</td><td>以多条算术数据通路提升整体吞吐；不保证单次加法延迟更低</td></tr>
+<tr><td>特殊函数单元（SFU）</td><td>CPU 也可有专用数学指令或通过库实现</td><td>为部分函数提供专门的计算路径；一个完整数学函数可能仍需多条指令</td></tr>
+<tr><td>矩阵乘加单元</td><td>部分 CPU 有，如 AMX</td><td>Tensor Core 面向矩阵块，提升受支持数据类型的密集乘加吞吐</td></tr>
+</tbody></table></div><p>“CUDA Core”是厂商对部分算术资源的命名，不是一个具有独立取指、调度和缓存的 CPU 核心。CPU 的 SIMD 与 GPU 的成组数据通路都利用数据并行；两者的线程语义和调度方式有所不同。</p>
+<p class="model-note">参照 <a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/">NVIDIA Hopper 架构说明</a>、<a href="https://www.intel.com/content/www/us/en/support/articles/000005779/processors.html">Intel 向量指令扩展</a>与 <a href="https://www.intel.com/content/www/us/en/products/docs/accelerator-engines/what-is-intel-amx.html">Intel AMX</a>。消费级 GPU 与计算型 GPU 的 FP64、矩阵等资源配比可能相差很大，不能仅凭“GPU”名称推断。</p></div><p>浮点运算语义见 <a href="appendix-14.html">附录 14</a>，矩阵指令见 <a href="appendix-15.html">附录 15</a>。<a href="../chapters/chapter-hardware.html#compute-path">返回第二章主线 →</a></p></section></main></body></html>

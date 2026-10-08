@@ -1,0 +1,311 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="从矩阵乘法与凸组合复习线性代数，理解 Attention decode、KV cache、分块 softmax，并连接 Ascend C 算子优化。"><title>从线性代数到 Attention Decode · GPU 架构实验室</title><style>/* Chapter 1: guided learning with freely adjustable experiments.
+ * Hallmark · macrostructure: Workbench · genre: editorial · theme: Almanac
+ * audience: personal CPU-literate learner · use: free experimentation · tone: utilitarian
+ * nav: N13 · footer: Ft4 · enrichment: none
+ */
+:root {
+  --color-paper: oklch(96% 0.018 88);
+  --color-paper-2: oklch(92% 0.025 88);
+  --color-paper-3: oklch(88% 0.035 90);
+  --color-ink: oklch(20% 0.022 80);
+  --color-ink-2: oklch(32% 0.028 78);
+  --color-muted: oklch(43% 0.025 78);
+  --color-rule: oklch(76% 0.035 83);
+  --color-rule-2: oklch(57% 0.04 80);
+  --color-accent: oklch(60% 0.17 38);
+  --color-accent-ink: oklch(98% 0.01 90);
+  --color-focus: oklch(48% 0.2 250);
+  --color-blue: oklch(56% 0.13 245);
+  --color-green: oklch(53% 0.12 145);
+  --color-wait: oklch(65% 0.14 55);
+  --color-error: oklch(48% 0.18 28);
+  --color-success: oklch(44% 0.12 145);
+  --color-overlay: oklch(10% 0.02 80 / .56);
+  --color-shadow: oklch(20% 0.02 80 / .16);
+  --font-display: Georgia, "Times New Roman", serif;
+  --font-body: Arial, "Noto Sans SC", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
+  --space-5: 1.5rem; --space-6: 2rem; --space-7: 3rem; --space-8: 4.5rem;
+  --radius: .35rem; --rule: 1px; --nav-height: 4rem;
+  --ease-out: cubic-bezier(.2,.75,.25,1);
+}
+* { box-sizing: border-box; }
+.appendix-chapter { margin-block: 3rem; padding-block-start: 1.5rem; border-top: 2px solid var(--color-rule-2); }
+.appendix-chapter > h2 { font-size: clamp(1.35rem, 2.5vw, 1.8rem); margin: 0 0 1.5rem; }
+.appendix-chapter[id] { scroll-margin-top: 9rem; }
+.mapping-controls { display:flex; flex-wrap:wrap; gap:.5rem; margin-block:1.5rem; }
+.mapping-controls button { min-height:44px; padding:.5rem .75rem; background:var(--color-paper); color:var(--color-ink); border:1px solid var(--color-rule-2); cursor:pointer; white-space:nowrap; }
+.mapping-controls button[aria-pressed="true"] { background:var(--color-ink); color:var(--color-paper); }
+.map-block.selected-pipeline { border:2px solid var(--color-ink); background:var(--color-paper-2); }
+#thread-to-sm label { display:block; }
+.mapping-figure { margin:1.5rem 0; }
+.mapping-figure figcaption { margin-top:1rem; font-size:.85rem; color:var(--color-muted); }
+.map-columns { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; }
+.map-block { border:1px solid var(--color-rule-2); padding:.75rem; margin-block:.5rem; }
+.map-warp { padding-top:.75rem; font-size:.8rem; }
+.map-threads { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:2px; margin-top:.4rem; }
+.map-threads span { text-align:center; font-family:var(--font-mono); font-size:.65rem; padding:.35rem 0; background:var(--color-paper-2); color:var(--color-ink); border:2px solid var(--color-paper-2); }
+.map-threads .tracked { background:var(--color-ink); color:var(--color-paper); border-color:var(--color-accent); }
+.map-sm { border:3px solid var(--color-ink); padding:.75rem; min-width:0; }
+.map-sm h5,.mapping-figure h5 { font-size:1rem; margin:.25rem 0 .75rem; }
+.map-resource { border-top:1px solid var(--color-rule); padding:.75rem 0; font-size:.85rem; }
+.map-resource.selected-pipeline { background:var(--color-paper-3); font-weight:bold; }
+.map-queue { padding:1rem; border:1px dashed var(--color-rule-2); }
+@media(min-width:50rem) { .map-columns { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.teaching-phase { margin-block: 2.5rem; min-width: 0; }
+.phase-heading { font-family: var(--font-body); font-size: 1.2rem; padding-block: .75rem; border-block-end: 2px solid var(--color-rule-2); margin-bottom: 1.25rem; }
+.teaching-phase > p { max-width: 76ch; }
+.teaching-phase[data-phase="04"] { padding: 1.25rem; background: var(--color-paper-2); color: var(--color-ink); border-inline-start: 4px solid var(--color-accent); }
+.teaching-phase[data-phase="04"] .phase-heading { margin-top: 0; }
+.teaching-phase li { margin-block: .75rem; max-width: 76ch; }
+.dependency-chain { padding: 1.25rem; background: var(--color-paper-2); color: var(--color-ink); font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+section[id] { scroll-margin-top: 5rem; }
+.learning-route { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:2rem; }
+.learning-route a,.preset-row button,.step-button { display:inline-flex; align-items:center; min-height:44px; padding:.5rem .75rem; border:1px solid var(--color-rule-2); background:var(--color-paper); color:var(--color-ink); font-size:.85rem; text-decoration:none; cursor:pointer; }
+.reading-guide { color:var(--color-muted); max-width:68ch; }
+.guided-example { padding:clamp(1rem,3vw,2rem); margin-block:1.5rem; border:1px solid var(--color-rule); background:var(--color-paper); color:var(--color-ink); }
+.guided-example h3 { margin-top:0; }
+.guided-example p { max-width:76ch; }
+.guided-example dl div { grid-template-columns:7rem minmax(0,1fr); }
+.guided-example pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--font-mono); }
+.key-insight { padding:1rem; border-left:4px solid var(--color-accent); background:var(--color-paper-2); }
+.key-insight > strong:first-child { display:block; margin-bottom:.5rem; }
+.example-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.example-comparison p { padding:1rem; background:var(--color-paper-2); }
+summary { cursor:pointer; min-height:44px; padding-block:.5rem; font-weight:700; }
+summary:focus-visible { outline:3px solid var(--color-focus); }
+.experiment-prompt { margin-block:1.5rem; padding:1rem; border-left:3px solid var(--color-rule-2); }
+.lesson-bridge { margin-top:2rem; padding-top:1.5rem; border-top:1px solid var(--color-rule); max-width:75ch; }
+.lesson-bridge a { white-space:nowrap; font-weight:700; }
+.preset-row { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem; }
+.mechanism-example { padding:1.5rem; font-size:1.15rem; line-height:1.8; background:var(--color-paper); }
+.cycle { font:normal .55rem/1.35rem var(--font-mono); text-align:center; }
+.cycle.waiting,.cycle.issued { color:var(--color-ink); }
+.cycle.future { opacity:.25; }
+.cycle-ruler { padding-left:2.2rem; }
+.step-button:disabled { opacity:.5; cursor:not-allowed; }
+@media (max-width:39.99rem) { .example-comparison { grid-template-columns:1fr; } .intro-grid { grid-template-columns:1fr; } h1 { font-size:2.7rem; } }
+html, body { margin: 0; overflow-x: clip; scroll-behavior: smooth; }
+body { background: var(--color-paper); color: var(--color-ink); font-family: var(--font-body); line-height: 1.6; }
+button, input, select { font: inherit; }
+button, a, select, input { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+a { color: inherit; text-underline-offset: .18em; }
+button { color: inherit; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.shell { width: min(100% - 2rem, 82rem); margin-inline: auto; }
+.topbar { position: sticky; inset-block-start: 0; z-index: 300; min-height: var(--nav-height); display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: var(--space-4); padding-inline: clamp(1rem, 3vw, 2rem); background: var(--color-paper); color: var(--color-ink); border-block-end: var(--rule) solid var(--color-rule); }
+.brand { display: flex; align-items: center; gap: var(--space-3); text-decoration: none; font-weight: 700; white-space: nowrap; }
+.brand-mark { display: grid; place-items: center; inline-size: 2rem; block-size: 2rem; background: var(--color-ink); color: var(--color-paper); font-family: var(--font-mono); }
+.search-pill { min-height: 2.75rem; display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-4); border: var(--rule) solid var(--color-rule-2); border-radius: 99rem; background: var(--color-paper-2); cursor: pointer; white-space: nowrap; }
+kbd { padding: .08rem .35rem; border: var(--rule) solid var(--color-rule); border-radius: .2rem; background: var(--color-paper); font: .72rem var(--font-mono); }
+.progress-wrap { position: absolute; inset-inline: 0; inset-block-end: -1px; height: 2px; background: var(--color-paper-3); }
+.progress-wrap span { display: block; height: 100%; width: 0; background: var(--color-accent); }
+.intro { padding-block: clamp(3rem, 8vw, 7rem) clamp(4rem, 10vw, 9rem); }
+.chapter-label, .lesson-head > p:first-child { margin: 0 0 var(--space-5); font: .76rem var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--color-muted); }
+.intro-grid { display: grid; gap: var(--space-7); }
+h1, h2, h3 { font-style: normal; overflow-wrap: anywhere; min-width: 0; }
+h1 { max-width: 13ch; margin: 0; font: 700 clamp(2.7rem, 8vw, 6.7rem)/.98 var(--font-display); letter-spacing: -.055em; }
+.lede { max-width: 56ch; margin: var(--space-6) 0 0; font-size: clamp(1.05rem, 2vw, 1.28rem); color: var(--color-ink-2); }
+.thesis { align-self: end; padding-block-start: var(--space-4); border-block-start: 4px solid var(--color-accent); }
+.thesis span { display: block; font: .74rem var(--font-mono); color: var(--color-muted); }
+.thesis strong { display: block; margin-block: var(--space-3) var(--space-5); font-size: clamp(1.25rem, 2.5vw, 1.8rem); line-height: 1.35; }
+.thesis a { font-weight: 700; white-space: nowrap; }
+.term-strip { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin-block-start: var(--space-8); border-block: var(--rule) solid var(--color-rule); }
+.term-strip span { padding: var(--space-3); text-align: center; font: .77rem var(--font-mono); border-inline-end: var(--rule) solid var(--color-rule); }
+.term-strip span:nth-child(3n) { border-inline-end: 0; }
+.lesson { padding-block: clamp(4.5rem, 9vw, 8rem); border-block-start: var(--rule) solid var(--color-rule); }
+.lesson-head { display: flex; flex-direction: column; max-width: 62rem; margin-block-end: var(--space-7); }
+.lesson-head h2 { max-width: 18ch; margin: 0; font: 700 clamp(2rem, 5vw, 4.4rem)/1.03 var(--font-display); letter-spacing: -.04em; }
+.lesson-head > p:last-child { max-width: 58ch; margin: var(--space-4) 0 0; color: var(--color-muted); }
+.workbench { display: grid; gap: var(--space-5); }
+.control-pane, .silicon, .cpu-machine, .simt-bench, .architecture-map { border: var(--rule) solid var(--color-rule-2); background: var(--color-paper-2); }
+.control-pane { padding: clamp(1.25rem, 3vw, 2rem); }
+label { display: flex; justify-content: space-between; gap: var(--space-3); font-weight: 700; }
+output { font-family: var(--font-mono); }
+input[type="range"] { width: 100%; min-height: 2.75rem; accent-color: var(--color-accent); cursor: ew-resize; }
+.control-scale { display: flex; justify-content: space-between; color: var(--color-muted); font: .7rem var(--font-mono); }
+.readout-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-3); margin-block: var(--space-6); }
+.readout-grid div { padding: var(--space-4); background: var(--color-paper); border-block-start: 3px solid var(--color-ink); }
+.readout-grid small { display:block; color: var(--color-muted); }
+.readout-grid strong { font-size: 1.5rem; }
+.model-note { margin: 0; }
+.silicon { min-height: 24rem; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); grid-auto-rows: 3rem; gap: 3px; padding: 3px; background: var(--color-ink); }
+.silicon-cell { display:grid; place-items:center; padding:.25rem; text-align:center; background:var(--color-paper-3); color:var(--color-ink); font:.63rem/1.2 var(--font-mono); }
+.silicon-cell.compute { background: var(--color-accent); color: var(--color-accent-ink); }
+.silicon-cell.control { background: var(--color-blue); color: var(--color-accent-ink); }
+.silicon-cell.cache { background: var(--color-green); color: var(--color-accent-ink); }
+.definition-grid { display: grid; gap: var(--space-5); margin-block-start: var(--space-7); }
+.definition-grid article { border-block-start: 3px solid var(--color-ink); padding-block-start: var(--space-4); }
+.definition-grid h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.definition-grid p { margin: 0; }
+dl, dd { margin: 0; } dl div { display: grid; grid-template-columns: 3rem minmax(0,1fr); gap: var(--space-2); margin-block: var(--space-2); } dt { font: 700 .82rem var(--font-mono); }
+.precision { margin-block-start: var(--space-6); padding: var(--space-4); border-inline-start: 4px solid var(--color-accent); background: var(--color-paper-2); }
+.mechanism-tabs, .segmented { display: flex; flex-wrap: wrap; gap: 1px; background: var(--color-rule); border-block-end: var(--rule) solid var(--color-rule-2); }
+.mechanism-tabs button, .segmented button { flex: 1 1 auto; min-height: 3rem; border: 0; background: var(--color-paper); cursor: pointer; white-space: nowrap; }
+.mechanism-tabs button[aria-selected="true"], .segmented button.active { background: var(--color-ink); color: var(--color-paper); }
+.timeline { display: grid; grid-template-columns: repeat(12,minmax(0,1fr)); min-height: 10rem; gap: 2px; padding: var(--space-4); background: var(--color-paper); }
+.timeline-cell { display: flex; align-items: end; justify-content: center; padding: .25rem; background: var(--color-paper-3); font: .62rem var(--font-mono); writing-mode: vertical-rl; }
+.timeline-cell.work { background: var(--color-ink); color: var(--color-paper); }
+.timeline-cell.wait { background: var(--color-wait); color: var(--color-ink); }
+.timeline-cell.saved { background: var(--color-green); color: var(--color-accent-ink); }
+.mechanism-copy { padding: var(--space-5); border-block-start: var(--rule) solid var(--color-rule-2); }
+.mechanism-copy h3 { margin: 0 0 var(--space-2); }.mechanism-copy p { margin: 0; max-width: 66ch; }
+.cpu-summary { display: grid; gap: var(--space-2); margin-block-start: var(--space-5); }
+.cpu-summary span { padding: var(--space-3); border-block-end: var(--rule) solid var(--color-rule); }
+.dark-section { width: 100%; max-width: none; padding-inline: max(1rem, calc((100% - 80rem)/2)); background: var(--color-ink); color: var(--color-paper); border-color: var(--color-ink); }
+.dark-section .lesson-head > p, .dark-section .control-scale { color: var(--color-paper-3); }
+.scheduler-grid { display: grid; gap: var(--space-5); }
+.scheduler-controls { padding: var(--space-5); border: var(--rule) solid var(--color-rule-2); }
+.scheduler-controls label + input { margin-block-end: var(--space-4); }
+.run-button { width: 100%; min-height: 3rem; margin-block: var(--space-3) var(--space-5); border: var(--rule) solid var(--color-paper); background: var(--color-accent); color: var(--color-accent-ink); font-weight: 700; cursor: pointer; white-space: nowrap; }
+.run-button:active { transform: translateY(1px); }
+.run-button[disabled] { opacity: .55; cursor: not-allowed; }
+.utilization { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--space-2); }
+.utilization div { grid-column: 1/-1; height: .6rem; background: var(--color-ink-2); }.utilization i { display:block; width:0; height:100%; background:var(--color-green); transition: width 300ms var(--ease-out); }
+.cycle-ruler { display:grid; grid-template-columns:repeat(24,minmax(0,1fr)); font:.55rem var(--font-mono); color:var(--color-paper-3); }
+.cycle-ruler span { text-align:center; }
+.warp-lanes { display:grid; gap:3px; margin-block-start:var(--space-2); }
+.warp-row { display:grid; grid-template-columns:2.2rem repeat(24,minmax(0,1fr)); gap:2px; min-height:1.35rem; }
+.warp-row > span:first-child { font:.58rem var(--font-mono); align-self:center; }.cycle { background:var(--color-ink-2); }.cycle.waiting { background:var(--color-wait); }.cycle.issued { background:var(--color-green); }
+.legend { display:flex; flex-wrap:wrap; gap:var(--space-4); margin-block-start:var(--space-3); font:.7rem var(--font-mono); }.legend i { display:inline-block; width:.75rem; height:.75rem; margin-inline-end:.3rem; }.legend .ready { background:var(--color-ink-2); }.legend .waiting { background:var(--color-wait); }.legend .issued { background:var(--color-green); }
+.inverse { background:var(--color-ink-2); border-color:var(--color-accent); }
+.simt-controls { display:flex; flex-direction:column; gap:var(--space-4); padding:var(--space-4); }.simt-controls label { align-items:center; }.simt-controls select { min-height:2.75rem; border:var(--rule) solid var(--color-rule-2); background:var(--color-paper); color:var(--color-ink); }
+.code-branch { padding:var(--space-4); background:var(--color-ink); color:var(--color-paper); overflow:auto; }.code-branch code { font-family:var(--font-mono); white-space:nowrap; }
+.thread-grid { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:4px; padding:var(--space-5); }.thread { min-height:3.4rem; display:grid; place-items:center; background:var(--color-ink); color:var(--color-paper); font: .72rem var(--font-mono); }.thread.path-b { background:var(--color-accent); color:var(--color-accent-ink); }
+.path-row { display:grid; gap:var(--space-4); padding:var(--space-5); border-block-start:var(--rule) solid var(--color-rule-2); }.path-row span { font:.72rem var(--font-mono); }.mask { display:flex; gap:2px; margin-block-start:var(--space-2); }.mask i { flex:1; height:.75rem; background:var(--color-rule); }.mask i.on { background:var(--color-ink); }.mask.b i.on { background:var(--color-accent); }
+.divergence-meter { display:flex; flex-wrap:wrap; justify-content:space-between; gap:var(--space-3); padding:var(--space-4); background:var(--color-paper-3); font-family:var(--font-mono); }
+.compare-table { margin-block-start:var(--space-6); border-block-start:3px solid var(--color-ink); }.compare-table [role=row] { display:grid; grid-template-columns:minmax(7rem,.7fr) repeat(2,minmax(0,1fr)); border-block-end:var(--rule) solid var(--color-rule); }.compare-table [role=row] > * { padding:var(--space-3); border-inline-end:var(--rule) solid var(--color-rule); }.compare-table [role=row] > *:last-child { border-inline-end:0; }
+.architecture-map { display:grid; gap:var(--space-5); padding:var(--space-5); }.hierarchy { display:grid; gap:var(--space-2); }.hierarchy button { display:grid; grid-template-columns:4rem minmax(0,.7fr) minmax(0,1.4fr); align-items:center; gap:var(--space-3); min-height:4.5rem; padding:var(--space-3); text-align:start; border:var(--rule) solid var(--color-rule); background:var(--color-paper); cursor:pointer; }.hierarchy button.selected { border-color:var(--color-ink); box-shadow:inset 4px 0 var(--color-accent); }.hierarchy small { font-family:var(--font-mono); color:var(--color-muted); }.hierarchy span { color:var(--color-muted); }
+.chip-view { min-width:0; }.host,.global-memory,.gpu-box { padding:var(--space-3); border:var(--rule) solid var(--color-rule-2); background:var(--color-paper); }.host,.global-memory { display:flex; justify-content:space-between; margin-block-end:var(--space-2); }.host i,.global-memory i { color:var(--color-muted); font:.7rem var(--font-mono); }.gpu-box { padding:var(--space-4); }.gpu-label { font:700 .72rem var(--font-mono); }.l2 { margin-block:var(--space-3); padding:var(--space-2); text-align:center; background:var(--color-green); color:var(--color-accent-ink); }.sm-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-2); }.sm { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; padding:var(--space-2); background:var(--color-paper-3); border:var(--rule) solid var(--color-rule); }.sm > b { grid-column:1/-1; font:.65rem var(--font-mono); }.sm i { aspect-ratio:1; background:var(--color-ink-2); }.sm.highlight { outline:3px solid var(--color-accent); }.sm i.highlight { background:var(--color-accent); }
+.architecture-explain { padding:var(--space-5); background:var(--color-ink); color:var(--color-paper); }.architecture-explain p { margin:var(--space-2) 0 0; max-width:70ch; }
+.takeaway { margin-block-start:var(--space-8); padding-block-start:var(--space-5); border-block-start:5px solid var(--color-accent); }.takeaway p { font:.75rem var(--font-mono); }.takeaway blockquote { max-width:100%; margin:0; font:600 1.05rem/1.8 var(--font-body); }
+.quiz { padding-block:var(--space-8); }.quiz-list { display:grid; gap:var(--space-4); }.quiz-list article { padding:var(--space-5); border:var(--rule) solid var(--color-rule-2); background:var(--color-paper-2); }.quiz-list p { margin-block-start:0; font-weight:700; }.quiz-list button { min-width:5rem; min-height:2.75rem; border:var(--rule) solid var(--color-ink); background:var(--color-paper); cursor:pointer; white-space:nowrap; }.quiz-list button.chosen { background:var(--color-ink); color:var(--color-paper); }.quiz-list output { display:block; min-height:1.5lh; margin-block-start:var(--space-3); }.quiz-list output.good { color:var(--color-success); }.quiz-list output.bad { color:var(--color-error); }
+.footer { padding-block:var(--space-6); border-block-start:var(--rule) solid var(--color-rule-2); font:.72rem/1.65 var(--font-mono); color:var(--color-muted); }.footer p { margin:0; }
+.command { position:fixed; inset:0; width:min(40rem,calc(100% - 2rem)); height:fit-content; max-height:min(80dvh,40rem); margin:auto; padding:0; border:var(--rule) solid var(--color-rule-2); background:var(--color-paper); color:var(--color-ink); box-shadow:0 1.5rem 5rem var(--color-shadow); }.command::backdrop { background:var(--color-overlay); }.command-input-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:var(--space-3); border-block-end:var(--rule) solid var(--color-rule); }.command input { min-height:2.75rem; border:0; outline:0; background:var(--color-paper); color:var(--color-ink); }.icon-button { width:2.75rem; height:2.75rem; border:0; background:var(--color-paper-2); cursor:pointer; }.command-results { max-height:55dvh; overflow:auto; padding:var(--space-2); }.command-result { width:100%; min-height:3rem; display:flex; justify-content:space-between; align-items:center; gap:var(--space-3); padding:var(--space-3); border:0; background:var(--color-paper); cursor:pointer; text-align:start; }.command-result.selected { background:var(--color-ink); color:var(--color-paper); }.command-result small { font-family:var(--font-mono); }
+@media (hover:hover) and (pointer:fine) { .search-pill:hover,.quiz-list button:hover,.hierarchy button:hover { border-color:var(--color-accent); }.mechanism-tabs button:hover,.segmented button:hover { background:var(--color-paper-3); }.mechanism-tabs button[aria-selected=true]:hover,.segmented button.active:hover { background:var(--color-ink); }.command-result:hover { background:var(--color-paper-3); } }
+@media (min-width:40rem) { .shell { width:min(100% - 3rem,82rem); }.intro-grid { grid-template-columns:minmax(0,1.5fr) minmax(16rem,.6fr); }.term-strip { grid-template-columns:repeat(6,minmax(0,1fr)); }.term-strip span:nth-child(3n) { border-inline-end:var(--rule) solid var(--color-rule); }.term-strip span:last-child { border-inline-end:0; }.definition-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }.cpu-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.scheduler-grid { grid-template-columns:minmax(15rem,.55fr) minmax(0,1.45fr); }.simt-controls { flex-direction:row; justify-content:space-between; align-items:center; }.path-row { grid-template-columns:repeat(2,minmax(0,1fr)); }.architecture-map { grid-template-columns:minmax(18rem,.8fr) minmax(0,1.2fr); }.sm-row { grid-template-columns:repeat(4,minmax(0,1fr)); }.quiz-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (min-width:60rem) { .workbench { grid-template-columns:minmax(18rem,.7fr) minmax(0,1.3fr); }.thread-grid { grid-template-columns:repeat(16,minmax(0,1fr)); }.cpu-summary { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media (max-width:39.99rem) { .search-label,kbd { display:none; }.architecture-map { padding:var(--space-3); }.hierarchy button { grid-template-columns:3.5rem minmax(0,1fr); }.hierarchy button span { grid-column:1/-1; }.compare-table [role=row] { grid-template-columns:1fr; padding-block:var(--space-2); }.compare-table [role=row] > * { border:0; padding-block:.25rem; }.compare-table [role=row]:first-child { display:none; }.compare-table [role=row] span:first-child { font-weight:700; }.compare-table [role=row] span:nth-child(2)::before { content:"SIMD · "; font-family:var(--font-mono); }.compare-table [role=row] span:nth-child(3)::before { content:"SIMT · "; font-family:var(--font-mono); } }
+@media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } }
+
+.supplement-body{max-width:1040px;margin:0 auto;padding:3rem clamp(1rem,4vw,3rem) 5rem}.supplement-intro{padding-bottom:2rem;border-bottom:2px solid var(--color-ink)}.supplement-intro h1{max-width:none;font-size:clamp(2.2rem,5vw,3.9rem);line-height:1.18;margin:1rem 0}.chapter-label{font-family:var(--font-mono);color:var(--color-muted);font-size:.8rem;letter-spacing:.08em}.lede{font-size:1.16rem;max-width:48rem}.supplement-body section{margin-top:3.8rem}.supplement-body h2{font-size:1.65rem;border-bottom:1px solid var(--color-rule);padding-bottom:.8rem}.supplement-body h3{font-size:1.15rem;margin-top:2rem}.supplement-body p,.supplement-body li{line-height:1.85}.equation{padding:1rem 1.2rem;background:var(--color-paper-2);font:1rem/1.9 var(--font-mono);overflow-x:auto;border-left:3px solid var(--color-accent)}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{padding:.85rem;border-bottom:1px solid var(--color-rule);text-align:left;vertical-align:top}th{background:var(--color-paper-2)}caption{text-align:left;font-weight:bold;padding:.7rem 0}.note,.source{font-size:.88rem;color:var(--color-muted)}.toc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.3rem 1rem;padding:1rem 0}.toc a{padding:.55rem 0}.lab{margin:1.5rem 0;padding:1.3rem;border:1px solid var(--color-rule-2)}.lab h3{margin-top:0}.controls{display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center;margin:1rem 0}.controls label{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.controls select,.controls input[type=number]{padding:.4rem;background:var(--color-paper);color:var(--color-ink);border:1px solid var(--color-rule-2);max-width:7rem}.controls input[type=range]{width:180px;accent-color:var(--color-accent)}.matrix-row{display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap}.matrix{display:grid;gap:4px;margin:.6rem 0}.matrix span{display:grid;place-items:center;width:3rem;height:3rem;border:1px solid var(--color-rule);font-family:var(--font-mono)}.matrix span.active{background:var(--color-ink);color:var(--color-paper);border:2px solid var(--color-accent)}.matrix span.term{outline:3px solid var(--color-accent);outline-offset:-3px}.lab-output{margin-top:1rem;font-family:var(--font-mono);line-height:1.9;overflow-wrap:anywhere}.figure-scroll{overflow-x:auto}.convex-plot{width:100%;max-width:650px;min-width:320px;display:block}.bars{display:grid;gap:.6rem;margin:1rem 0}.bar-row{display:grid;grid-template-columns:3rem 1fr 4.5rem;gap:.7rem;align-items:center}.track{background:var(--color-paper-3);height:1rem}.fill{background:var(--color-accent);height:100%}pre{background:var(--color-paper-2);padding:1.2rem;overflow:auto;font: .86rem/1.65 var(--font-mono)}details{border-bottom:1px solid var(--color-rule);padding:.6rem 0}summary{line-height:1.7}.back-top{display:block;text-align:right;margin-top:2rem}.memory{border-left:3px solid var(--color-accent);padding:.5rem 1rem;background:var(--color-paper-2)}.split-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.split-grid>div{padding:1rem;border:1px solid var(--color-rule)}@media(max-width:600px){.toc,.split-grid{grid-template-columns:1fr}.topbar{font-size:.8rem}.brand{white-space:normal}.supplement-body{padding-top:2rem}th,td{min-width:110px}.matrix-row{gap:.8rem}.lab{padding:.8rem}}@media print{.topbar,.controls,.back-top{display:none}body{background:white}section{break-before:auto}.lab,details{break-inside:avoid}}
+</style></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="#contents">本页目录 ↓</a></header><main class="supplement-body" id="top"><header class="supplement-intro"><p class="chapter-label">学习专题 · 线性代数 → ATTENTION → ASCEND C</p><h1>从线性代数<br>到 Attention Decode</h1><p class="lede">先看清一个输出元素如何求和，再追踪一个新 token 如何读取历史 KV。沿着同一组公式，理解分块、数值稳定性与数据搬运。</p><p class="note">基础范围：标准稠密、因果自注意力；先单请求单头，再扩展 GQA。硬件部分面向昇腾 NPU / Ascend C。</p></header>
+<nav id="contents" aria-label="本页目录"><h2>阅读路线</h2><div class="toc"><a href="#matmul">01 · 矩阵乘法与归约</a><a href="#geometry">02 · 点积、投影与凸组合</a><a href="#attention">03 · 手算一次 Attention</a><a href="#decode">04 · Decode 与 KV cache</a><a href="#tiling">05 · 分块后如何保持结果正确</a><a href="#ascend">06 · 连接 Ascend C</a><a href="#practice">07 · NumPy 实验与学习顺序</a><a href="#recall">08 · 记忆卡与自测</a><a href="#sources">09 · 资料与阅读范围</a></div></nav>
+<section id="matmul"><h2>01 · 矩阵乘法：输出轴与归约轴</h2><p>若 A 为 M×K，B 为 K×N，则 C=AB 为 M×N。M、N 枚举输出位置，K 是为同一个输出累加的维度，称为<strong>归约轴（reduction axis）</strong>。</p><div class="equation">C[i,j] = Σₖ A[i,k] × B[k,j]，k = 0,…,K−1<br>(M×K) @ (K×N) → (M×N)</div><p>例如 3×4 乘 4×5 得到 3×5，每个输出累加 4 个乘积。元素乘法则是另一种运算：在 NumPy 中，<code>A @ B</code> 表示矩阵乘法，<code>A * B</code> 表示逐元素相乘（受广播规则约束）。</p>
+<div class="lab"><h3>实验 1 · 选择一个输出，看它累加哪些元素</h3><p>所有下标从 0 开始。深色为完整的输入行／列，橙色边框标出当前 k 对应的乘积。</p><div class="controls"><label>输出行 i <select id="mat-i"><option>0</option><option>1</option></select></label><label>输出列 j <select id="mat-j"><option>0</option><option>1</option></select></label><label>归约位置 k <input id="mat-k" type="range" min="0" max="2" value="0"><output id="mat-k-value">0</output></label></div><div class="matrix-row"><div>A · 2×3<div id="matrix-a" class="matrix" style="grid-template-columns:repeat(3,3rem)"></div></div><strong>×</strong><div>B · 3×2<div id="matrix-b" class="matrix" style="grid-template-columns:repeat(2,3rem)"></div></div><strong>=</strong><div>C · 2×2<div id="matrix-c" class="matrix" style="grid-template-columns:repeat(2,3rem)"></div></div></div><div id="mat-result" class="lab-output" aria-live="polite"></div></div>
+<h3>转置改变索引的解释</h3><div class="equation">Bᵀ[j,k] = B[k,j]<br>S[i,j] = (QKᵀ)[i,j] = Σₖ Q[i,k]K[j,k]</div><p>最后一式比较的是 Q 的第 i 行与 K 的第 j 行。Kᵀ 将 key 的特征轴放到矩阵乘法的内侧。数学转置不要求先复制一份物理转置矩阵；是否需要搬运取决于布局与计算接口。</p><p class="source">基础阅读：<a href="https://d2l.ai/chapter_preliminaries/linear-algebra.html">D2L §2.3：点积、矩阵向量乘法与矩阵乘法</a>。硬件衔接：<a href="../chapters/chapter-matrix.html#gemm-semantics">现有教材：矩阵乘法语义</a>。</p></section>
+<section id="geometry"><h2>02 · 从点积到加权组合</h2><h3>点积同时受方向与长度影响</h3><div class="equation">xᵀy = Σᵢ xᵢyᵢ = ‖x‖₂ ‖y‖₂ cos θ</div><p>例如，(1,2) 与 (2,−1) 的点积为 0，因此它们正交。两个非零向量点积为 0，夹角为 90°。一般情况下，x 放大 a 倍，点积也放大 a 倍。因此未归一化的点积不等于余弦相似度；Attention 的打分可以同时受方向与范数影响。</p><p>线性投影 xW 的每个输出也是点积。若 W 为 768×64，秩最多为 64，不可能对所有 768 维输入保持一一对应；但对受限的低维输入集合，仍可能保留所需信息。“投影”在神经网络中常泛指线性变换，不保证是几何上的正交投影。</p>
+<h3>非负、和为 1：结果落在凸包内</h3><div class="equation">o = Σⱼ pⱼvⱼ，pⱼ ≥ 0，Σⱼpⱼ = 1</div><p>两个向量时，结果在线段上；三个不共线向量时，结果在三角形内部或边界上。这里把向量端点视为点。这个限制来自权重，与向量是否垂直无关。</p><div class="lab"><h3>实验 2 · 权重改变的是线段上的位置</h3><div class="controls"><label>v₂ 的权重 t <input id="convex-t" type="range" min="0" max="1" step="0.05" value="0.75"><output id="convex-t-value">0.75</output></label></div><div class="figure-scroll"><svg class="convex-plot" viewBox="0 0 620 290" role="img" aria-labelledby="convex-title"><title id="convex-title">v₁=(1,0) 和 v₂=(0,2) 之间的凸组合</title><path d="M70 25V245H530" stroke="currentColor" fill="none"/><path d="M70 55L470 245" stroke="#9b5937" stroke-width="3"/><text x="480" y="267">v₁=(1,0)</text><text x="85" y="40">v₂=(0,2)</text><text x="45" y="264">0</text><text x="540" y="249">x</text><text x="55" y="20">y</text><path id="convex-guide" stroke="#6a756a" stroke-dasharray="5 5" fill="none"/><circle cx="470" cy="245" r="5" fill="currentColor"/><circle cx="70" cy="55" r="5" fill="currentColor"/><circle id="convex-point" r="8" fill="#b44f26"/><text id="convex-label" font-size="15"></text></svg></div><p id="convex-result" class="lab-output" aria-live="polite"></p><p class="note">坐标轴分别缩放以便阅读。线段表示可达到的端点集合；不表示时间或数据搬运。</p></div><p>Attention 的单头输出在所用 V 行向量的凸包内。随后拼接多头、乘 W<sub>O</sub>、加残差之后，不能再声称整个模块输出仍在这个原始凸包内。</p></section>
+<section id="attention"><h2>03 · 手算一次 Attention</h2><p>在常见实现中，输入隐藏状态 X 经学习到的权重产生 Q=XW<sub>Q</sub>、K=XW<sub>K</sub>、V=XW<sub>V</sub>。Q 用来发起匹配，K 用来打分，V 提供被混合的内容。它们不是三份手工指定的词义标签。</p><div class="equation">S = QKᵀ / √d + M<br>P = softmax(S)，每行沿 key 位置归一化<br>O = PV</div><p>M 为加性掩码：允许的位置加 0，禁止的位置在数学上加 −∞。常规缩放 √d 的动机是：若各分量独立、均值 0、方差 1，d 项点积的方差为 d；缩放后为 1。这是解释尺度的假设模型，不是每层数据必然满足的统计规律。</p><p class="source">公式与缩放动机：<a href="https://arxiv.org/html/1706.03762v7#S3.SS2">Attention Is All You Need，§3.2</a>。</p>
+<h3>稳定 softmax：统一减去最大值</h3><div class="equation">m = maxⱼ sⱼ<br>pⱼ = exp(sⱼ−m) / Σₜ exp(sₜ−m)</div><p>分子分母共同乘 exp(−m)，比值不变；最大指数的输入变成 0，避免大正数指数溢出。有限精度下仍可能有小项下溢。若一整行都被 mask，−∞−(−∞) 无定义，必须按算子约定单独处理。</p>
+<div class="lab"><h3>实验 3 · 一条 query，三个 key，两个输出分量</h3><div class="equation">q = (a,0)<br>K = [(1,0), (0,1), (−1,0)]<br>V = [(1,0), (0,2), (2,2)]<br>d = 2；s = (a/√2, 0, −a/√2)</div><div class="controls"><label>q 的第一分量 a <input id="query-a" type="range" min="-4" max="4" step="0.25" value="1"><output id="query-a-value">1</output></label><label><input id="mask-last" type="checkbox">屏蔽第 3 个位置</label></div><div id="score-output" class="lab-output"></div><div id="prob-bars" class="bars"></div><div id="attention-output" class="lab-output" aria-live="polite"></div><p class="note">柱长表示归一化后的概率。a=0 且无掩码时，三个权重均为 1/3；屏蔽位置只改变参与归一化的集合。</p></div>
+<p>默认 a=1 时，分数约为 (0.7071,0,−0.7071)，权重约为 (0.5760,0.2840,0.1400)，输出约为 (0.8560,0.8480)。第一项是 0.5760×1+0.2840×0+0.1400×2；第二项同样沿三个位置求和。</p><p class="memory"><strong>要记住两次归约：</strong>QKᵀ 沿特征 d 求和，PV 沿位置 L 求和。softmax 的 max 与 sum 也沿位置 L。</p></section>
+<section id="decode"><h2>04 · Decode：只有一个新 query，仍要读取历史 KV</h2><p>先考虑标准自回归模型、单请求、单层、单头，每轮处理一个新位置。将该位置的 k、v 写入缓存后，令 L 表示包含当前位置的可访问 KV 数量。历史 K、V 可复用；新 q 与所有可访问 key 重新计算分数。历史 query 通常不需要存入 KV cache。</p><div class="table-scroll"><table><thead><tr><th>阶段</th><th>Q</th><th>K / V（取 dᵥ=d）</th><th>逻辑分数形状</th></tr></thead><tbody><tr><td>Prefill：一次处理 L 个提示 token</td><td>L×d</td><td>L×d</td><td>L×L，带因果 mask</td></tr><tr><td>Decode：本轮一个新位置</td><td>1×d</td><td>L×d</td><td>1×L</td></tr></tbody></table></div><p>所以单步 decode 不需要计算完整 L×L 分数矩阵。融合实现还可以避免把完整的 1×L 分数写到全局内存。分块 prefill、推测解码和一次处理多个 query 不属于这里的单 token 简化模型。</p><h3>加入 batch 与 GQA</h3><p>逻辑形状可写为 Q：[B,H<sub>q</sub>,1,d]，K：[B,H<sub>kv</sub>,L,d]，V：[B,H<sub>kv</sub>,L,dᵥ]。MHA 中 H<sub>q</sub>=H<sub>kv</sub>；GQA 让一组 query 头共享一个 KV 头；MQA 的 H<sub>kv</sub>=1。这是逻辑形状，实际缓存可以采用不同布局或分页。</p><p class="source">KV 头共享：<a href="https://arxiv.org/abs/2305.13245">GQA 原论文</a>。</p>
+<h3>先算数据量，再提出性能假设</h3><div class="equation">每层 KV cache 字节数 = B × L × Hkv × (d+dᵥ) × b<br>QKᵀ 与 PV 的运算量 ≈ 2 × B × Hq × L × (d+dᵥ) FLOP</div><p>b 是每个缓存元素的字节数，乘和加各记一次 FLOP。缓存容量公式不含分页空洞、量化尺度及额外元数据；多层时再乘层数。运算量不含 softmax、位置变换和线性投影。</p><div class="lab"><h3>实验 4 · KV 容量不等于实际总线流量</h3><p>固定 B=1、Hq=32、d=dᵥ=128、缓存元素 2 字节。假设每个 KV 元素本轮只从外部存储读一次、忽略其他流量，计算理想化比值。</p><div class="controls"><label>L <select id="cache-l"><option>1024</option><option selected>4096</option><option>16384</option><option>32768</option></select></label><label>Hkv <select id="cache-h"><option>1</option><option selected>8</option><option>32</option></select></label></div><div id="cache-result" class="lab-output" aria-live="polite"></div></div><p>小 batch 的长上下文 decode 常需要优先检查 KV 读取与可并行工作是否充足。GQA 提供共享 KV 的机会，但若多个 query 头分别重读缓存，真实流量会增加。缓存命中也可能减少外部读取；不能直接用缓存容量替代 profiler 的带宽数据。</p><p class="source">Decode 的工作划分背景：<a href="https://pytorch.org/blog/flash-decoding/">Flash-Decoding 作者介绍</a>。本文的容量与 FLOP 示例由上述形状直接推导，不是设备跑分。</p></section>
+<section id="tiling"><h2>05 · 分块后如何保持结果正确</h2><p>Q(KᵀV) 与 (QKᵀ)V 在精确算术下相等，但 Attention 中间有 softmax，不能直接移走它。减少中间存储需要保留归一化所需的统计量。</p><h3>每块保存三个量</h3><p>将 key 位置划为不重叠的块 A、B。以下 s 已完成缩放和掩码。对于至少有一个有效位置的块：</p><div class="equation">mA = maxⱼ∈A sⱼ<br>ℓA = Σⱼ∈A exp(sⱼ−mA)<br>uA = Σⱼ∈A exp(sⱼ−mA) vⱼ</div><p>m、ℓ 为标量，u 为 dᵥ 维向量。u 是<strong>未归一化的加权和</strong>，局部输出为 u/ℓ。两个块的指数使用不同基准，合并前要重新缩放。</p><div class="equation">m = max(mA,mB)<br>α = exp(mA−m)，β = exp(mB−m)<br>ℓ = αℓA + βℓB<br>u = αuA + βuB<br>o = u / ℓ</div><p>推导只需观察 exp(s−m)=exp(s−mA)exp(mA−m)。这同时支持按顺序读块的 online softmax，以及不同工作单元计算各块后再合并。精确数学下结果一致；浮点归约顺序改变时不保证逐位相同。</p><div class="split-grid"><div><strong>为什么不能直接平均局部输出？</strong><p>A 只有一个 score=0，B 只有一个 score=ln 3。各块内部概率都是 1，但全局概率为 1/4 和 3/4；简单平均会得到错误的 1/2 和 1/2。</p></div><div><strong>空块怎么处理？</strong><p>空块或全 mask 块的有效质量为 0，应跳过合并或显式设为零贡献，避免计算 −∞−(−∞)。最终 ℓ=0 的整行要遵循接口语义。</p></div></div>
+<p>FlashAttention 利用分块和在线归一化降低中间结果的 IO。Decode 的 query 很少时，还可以沿 KV 长度拆分任务以增加并行度，然后付出统计量合并的代价。块越多并不必然越快：小块会增加调度、重复读 q 与合并开销。</p><p class="source">算法依据：<a href="https://arxiv.org/html/2205.14135v2">FlashAttention，§3 与 Algorithm 1</a>；沿 KV 切分的背景见 <a href="https://pytorch.org/blog/flash-decoding/">Flash-Decoding</a>。上面的两块推导是为本页重写的数学解释。</p></section>
+<section id="ascend"><h2>06 · 连接 Ascend C：从公式到数据与依赖</h2><p>昇腾是 NPU 平台，Ascend C 是算子开发体系。可以迁移现有 GPU 教材中“工作划分、数据复用、流水依赖”的分析方法；不能将 Warp、SM 或 shared memory 与昇腾对象直接一一对应。</p><div class="table-scroll"><table><thead><tr><th>数学工作</th><th>实现时先回答</th><th>需要学习的概念</th></tr></thead><tbody><tr><td>q 与 K 的点积</td><td>谁负责哪些 key？q 是否重复搬入？</td><td>核间切分、块大小、实际布局与步长</td></tr><tr><td>max、exp、sum、重缩放</td><td>哪些临时数据可留在片上？</td><td>Vector 运算、UB 空间、归约及精度</td></tr><tr><td>概率乘 V 并累加</td><td>输出分量怎样分配？部分和在哪里？</td><td>乘加、累加类型、Vector / Cube 路径选择</td></tr><tr><td>读取下一块、处理当前块</td><td>缓冲区何时可读、何时可复用？</td><td>搬运、队列、事件依赖与双缓冲</td></tr><tr><td>跨块合并</td><td>谁读取统计量并完成最终归一化？</td><td>工作区、阶段边界与最终归约</td></tr></tbody></table></div>
+<h3>先区分几类存储</h3><p>GM 保存全局数据；UB 支持 Vector 侧数据与临时结果；Cube 路径涉及 L1、L0A/L0B 输入缓冲和 L0C 累加结果。容量、数据路径与支持的布局随产品而变。这里不把 UB 画成 Cube 必经的一级缓存，也不假定所有算子都必须用 Cube。</p><p class="source">架构参考：<a href="https://www.hiascend.com/document/detail/en/canncommercial/800/opdevg/Ascendcopdevg/atlas_ascendc_10_0010.html">CANN 8.0：Storage Units</a>。这里只引用存储职责；实际开发应切换到目标产品与已安装 CANN 版本。</p>
+<h3>第一条设备学习路线</h3><ol><li><strong>Add：</strong>建立 Host 到 Device 的完整流程，识别 GM 与 LocalTensor。</li><li><strong>ReduceSum / ReduceMax：</strong>练习归约、尾块与有效元素范围。</li><li><strong>稳定 softmax：</strong>组合 max、减法、exp、sum、除法，核对与 NumPy 的误差。</li><li><strong>单 query Attention：</strong>先完成正确的 QKᵀ → softmax → PV，再加入分块状态。</li><li><strong>优化：</strong>用实际 shape 比较块大小、缓存复用及 KV 切分；测量以后再决定融合与流水策略。</li></ol><p>在 TPipe/TQue 编程方式中，先掌握缓冲分配、入队、出队及释放的生命周期。Host 侧 tiling 决定切分参数，Device 按这些参数处理数据。双缓冲只有在依赖正确且存在可交叠工作时才可能获益。</p><p class="source">开发入口：<a href="https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/programug/Ascendcopdevg/atlas_ascendc_10_00032.html">CANN 9.0：基于 TPipe 和 TQue 编程</a>；<a href="https://www.hiascend.com/doc_center/source/zh/canncommercial/800/developmentguide/opdevg/ascendcbestP/atlas_ascendc_best_practices_10_0002.html">CANN 8.0：Host / Kernel 与 Tiling 入门</a>。文档版本用于定位来源，实际使用时需匹配开发环境版本。</p><p class="memory">接入硬件实践时再确认：<strong>设备型号、CANN 版本、B/Hq/Hkv/L/d、缓存布局与 dtype</strong>。本页给出学习与分析框架，未提供经过设备验证的 Ascend C kernel。</p></section>
+<section id="practice"><h2>07 · NumPy 实验与学习顺序</h2><p>先比较完整计算和分块计算，再换实现语言。下面的参考程序只处理单 query、二维连续 K/V、无 mask；使用 float64 检验数学关系，不代表设备端精度配置。</p><pre><code id="numpy-code">import numpy as np
+
+
+def attention_full(q, K, V):
+    s = (K @ q) / np.sqrt(q.size)
+    p = np.exp(s - s.max())
+    p /= p.sum()
+    return p @ V
+
+
+def attention_blocked(q, K, V, block_size):
+    if block_size &lt;= 0 or len(K) == 0:
+        raise ValueError(&quot;Need positive block size and nonempty KV&quot;)
+    m, total = -np.inf, 0.0
+    acc = np.zeros(V.shape[1], dtype=np.float64)
+    for start in range(0, len(K), block_size):
+        kb = K[start:start + block_size]
+        vb = V[start:start + block_size]
+        s = (kb @ q) / np.sqrt(q.size)
+        next_m = max(m, s.max())
+        scale = np.exp(m - next_m)
+        weights = np.exp(s - next_m)
+        acc = scale * acc + weights @ vb
+        total = scale * total + weights.sum()
+        m = next_m
+    return acc / total
+
+
+if __name__ == &quot;__main__&quot;:
+    rng = np.random.default_rng(7)
+    q = rng.normal(size=8)
+    K = rng.normal(size=(37, 8))  # 37 checks a partial final block
+    V = rng.normal(size=(37, 6))  # d_v need not equal d
+    reference = attention_full(q, K, V)
+    for block in [1, 7, 16, 37, 64]:
+        result = attention_blocked(q, K, V, block)
+        np.testing.assert_allclose(result, reference, rtol=1e-12,
+                                   atol=1e-12)
+        print(block, np.max(np.abs(result - reference)))
+</code></pre><p><a download="attention_decode_reference.py" id="download-code" href="#practice">下载这段 NumPy 参考程序 ↓</a></p><h3>按理解程度推进</h3><div class="table-scroll"><table><thead><tr><th>阶段</th><th>完成标志</th><th>没通过就回看</th></tr></thead><tbody><tr><td>矩阵基础</td><td>不看公式写出 QKᵀ、PV 的一个元素</td><td>第 01 节</td></tr><tr><td>Attention 数值</td><td>手算三位置例子，解释概率和为 1</td><td>第 02–03 节</td></tr><tr><td>Decode 数据</td><td>解释为何是 1×L，算出每层缓存容量</td><td>第 04 节</td></tr><tr><td>分块算法</td><td>解释为何不能平均局部输出，复现 NumPy 结果</td><td>第 05 节</td></tr><tr><td>设备入门</td><td>完成 Add → 归约 → softmax，与参考结果比较</td><td>第 06 节及对应版本文档</td></tr></tbody></table></div><p>设备验证至少覆盖：非整块长度、不同上下文长度、极端分数、mask 与全 mask 约定、不同头数。性能测量区分单算子耗时与端到端 token 延迟，并在计时结束前确保设备工作完成。</p></section>
+<section id="recall"><h2>08 · 记忆卡与自测</h2><div class="equation">① (M×K) @ (K×N) → (M×N)<br>② C[i,j] = Σₖ A[i,k]B[k,j]<br>③ sⱼ = Σₖ qₖK[j,k] / √d<br>④ pⱼ = exp(sⱼ−m) / Σₜ exp(sₜ−m)<br>⑤ oᵣ = Σⱼ pⱼV[j,r]<br>⑥ 分块合并：先统一指数基准，再合并分母与加权和</div><p>先口述答案，再展开核对。能答对新例子，才算掌握，而不只是认得公式。</p><details><summary>1. A 为 2×3，B 为 3×4，C[1,2] 是什么？</summary><p>C 为 2×4。C[1,2]=A[1,0]B[0,2]+A[1,1]B[1,2]+A[1,2]B[2,2]。输出下标固定，归约下标遍历。</p></details><details><summary>2. 一个 query，100 个 key，每个 64 维，分数和输出是什么形状？</summary><p>分数为 1×100；若 V 为 100×64，输出为 1×64。前者沿 64 维求和，后者沿 100 个位置求和。</p></details><details><summary>3. 给所有分数加 1000，数学上的 Attention 输出会变化吗？</summary><p>不会。softmax 对共同平移不变；但直接计算 exp(s+1000) 可能溢出，应先减最大值。</p></details><details><summary>4. 为什么不能把每个 KV 块的局部 Attention 输出直接相加或平均？</summary><p>各块有自己的归一化分母。要按各块在全局分母中的质量重新加权；m、ℓ、u 或等价的 log-sum-exp 信息用于恢复这一关系。</p></details><details><summary>5. GQA 的 KV 头从 32 减到 8，缓存容量与计算量都变为 1/4 吗？</summary><p>固定其他量时，KV 容量为原来的 1/4。若 query 头数仍为 32，QKᵀ 与 PV 的主要 FLOP 不因 KV 共享而降到 1/4。真实流量收益还依赖复用方式。</p></details><details><summary>6. 数学结果相同、FLOP 更少，就一定更快吗？</summary><p>不一定。搬运、可并行任务数量、填充浪费、临时空间、启动和同步都影响耗时；浮点归约顺序也会影响误差。</p></details></section>
+<section id="sources"><h2>09 · 资料与阅读范围</h2><p>资料检索日期：2026-09-23。优先使用教材作者、论文作者与厂商官方资料。先按下面的范围阅读；本页数值例子、交互与容量估算为教学推导。</p><ol><li><a href="https://d2l.ai/chapter_preliminaries/linear-algebra.html">Dive into Deep Learning · Linear Algebra</a>：先读点积、矩阵向量与矩阵矩阵乘法；用于第 01–02 节。</li><li><a href="https://arxiv.org/html/1706.03762v7#S3.SS2">Attention Is All You Need · §3.2</a>：只抓 scaled dot-product attention 和 multi-head 公式；无需先读训练超参数。</li><li><a href="https://arxiv.org/html/2205.14135v2">FlashAttention · §3 / Algorithm 1</a>：在完成第 05 节之后，观察块、归一化统计量和 IO 的关系。</li><li><a href="https://pytorch.org/blog/flash-decoding/">Flash-Decoding for long-context inference</a>：理解为什么沿 KV 切分增加并行任务。文中 NVIDIA 测试结果不外推为昇腾收益。</li><li><a href="https://arxiv.org/abs/2305.13245">GQA 原论文</a>：理解 query 头与 KV 头数的区别。</li><li><a href="https://www.hiascend.com/document/detail/en/canncommercial/800/opdevg/Ascendcopdevg/atlas_ascendc_10_0010.html">CANN 8.0 · Storage Units</a>：核对 GM、UB、L1、L0 的职责与设备差异。</li><li><a href="https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/programug/Ascendcopdevg/atlas_ascendc_10_00032.html">CANN 9.0 · TPipe / TQue 编程</a>：进入 Ascend C 后读队列和缓冲生命周期。部分昇腾网页使用动态文档入口；若跳转首页，在官方文档中按标题和版本查找。</li></ol><p>继续衔接本地教材：<a href="../chapters/chapter-matrix.html">矩阵乘法的软硬件实现</a>、<a href="../chapters/chapter-hardware.html">计算、存储与数据搬运</a>。</p></section><a class="back-top" href="#top">回到页首 ↑</a></main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const A = [[1,2,3],[4,5,6]], B = [[1,2],[0,1],[2,0]];
+const C = A.map(row => B[0].map((_,j) => row.reduce((s,x,k)=>s+x*B[k][j],0)));
+function drawMatrix(id, rows, active, term){
+  $(id).replaceChildren(...rows.flatMap((row,i)=>row.map((value,j)=>{
+    const cell=document.createElement('span');cell.textContent=value;
+    if(active(i,j))cell.classList.add('active');
+    if(term(i,j))cell.classList.add('term');
+    return cell;
+  })));
+}
+function updateMatrix(){
+  const i=+$('mat-i').value,j=+$('mat-j').value,k=+$('mat-k').value;
+  $('mat-k-value').textContent=k;
+  drawMatrix('matrix-a',A,(r,c)=>r===i,(r,c)=>r===i&&c===k);
+  drawMatrix('matrix-b',B,(r,c)=>c===j,(r,c)=>r===k&&c===j);
+  drawMatrix('matrix-c',C,(r,c)=>r===i&&c===j,()=>false);
+  $('mat-result').textContent=`C[${i},${j}] = ${A[i].map((x,t)=>`${x}×${B[t][j]}`).join(' + ')} = ${C[i][j]}；当前项 ${A[i][k]}×${B[k][j]} = ${A[i][k]*B[k][j]}`;
+}
+function updateConvex(){
+  const t=+$('convex-t').value,x=470-400*t,y=245-190*t;
+  $('convex-t-value').textContent=t.toFixed(2);
+  $('convex-point').setAttribute('cx',x);$('convex-point').setAttribute('cy',y);
+  $('convex-guide').setAttribute('d',`M70 ${y}H${x}V245`);
+  $('convex-label').setAttribute('x',Math.min(x+14,460));$('convex-label').setAttribute('y',y-14);
+  $('convex-label').textContent=`o=(${(1-t).toFixed(2)},${(2*t).toFixed(2)})`;
+  $('convex-result').textContent=`o = ${(1-t).toFixed(2)}v₁ + ${t.toFixed(2)}v₂ = (${(1-t).toFixed(2)}, ${(2*t).toFixed(2)})`;
+}
+function updateAttention(){
+  const a=+$('query-a').value,masked=$('mask-last').checked;
+  $('query-a-value').textContent=a.toFixed(2);
+  const s=[a/Math.sqrt(2),0,masked?-Infinity:-a/Math.sqrt(2)];
+  const m=Math.max(...s),e=s.map(x=>Math.exp(x-m)),z=e.reduce((a,b)=>a+b,0),p=e.map(x=>x/z);
+  $('score-output').textContent=`s = (${s.map(x=>Number.isFinite(x)?x.toFixed(4):'−∞').join(', ')})`;
+  $('prob-bars').replaceChildren(...p.map((v,i)=>{
+    const row=document.createElement('div');row.className='bar-row';
+    const name=document.createElement('span');name.textContent=`p${i+1}`;
+    const track=document.createElement('div');track.className='track';
+    const fill=document.createElement('div');fill.className='fill';fill.style.width=`${v*100}%`;track.append(fill);
+    const val=document.createElement('span');val.textContent=v.toFixed(4);row.append(name,track,val);return row;
+  }));
+  $('attention-output').textContent=`o = (${(p[0]+2*p[2]).toFixed(4)}, ${(2*p[1]+2*p[2]).toFixed(4)})；Σp = ${p.reduce((a,b)=>a+b,0).toFixed(4)}`;
+}
+function updateCache(){
+  const L=+$('cache-l').value,H=+$('cache-h').value,bytes=L*H*256*2,flop=2*32*L*256;
+  $('cache-result').textContent=`单层 KV：${(bytes/2**20).toFixed(2)} MiB；32 层：${(32*bytes/2**20).toFixed(0)} MiB
+主要计算：${(flop/1e6).toFixed(2)} MFLOP；理想化 FLOP / KV 字节：${(flop/bytes).toFixed(1)} FLOP/byte`;
+  $('cache-result').style.whiteSpace='pre-line';
+}
+['mat-i','mat-j','mat-k'].forEach(id=>$(id).addEventListener('input',updateMatrix));
+$('convex-t').addEventListener('input',updateConvex);
+['query-a','mask-last'].forEach(id=>$(id).addEventListener('input',updateAttention));
+['cache-l','cache-h'].forEach(id=>$(id).addEventListener('input',updateCache));
+updateMatrix();updateConvex();updateAttention();updateCache();
+$('download-code').href=URL.createObjectURL(new Blob([$('numpy-code').textContent],{type:'text/plain;charset=utf-8'}));
+</script></body></html>

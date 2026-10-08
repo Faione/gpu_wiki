@@ -34,11 +34,11 @@ function documentFrom(file){
 }
 function run(file,doc){vm.runInNewContext(fs.readFileSync(root+file,'utf8'),{document:doc,console,setInterval(){},clearInterval(){}});}
 
-const cpu=documentFrom('appendix-18.html');run('app.js',cpu);
+const cpu=documentFrom('appendices/appendix-18.html');run('assets/js/app.js',cpu);
 for(const x of [15,50,85]){cpu.getElementById('core-complexity').value=x;cpu.getElementById('core-complexity').fire('input');assert.equal(cpu.getElementById('complexity-output').textContent,x);assert.equal((cpu.getElementById('silicon-map').innerHTML.match(/silicon-cell/g)||[]).length,42);}
 for(const b of cpu.querySelectorAll('[data-cpu]')){b.fire('click');assert(cpu.getElementById('cpu-copy').textContent.length>15);assert.equal(b.attrs['aria-selected'],'true');}
 
-const circuit=documentFrom('appendix-16.html');run('hardware-chapter.js',circuit);
+const circuit=documentFrom('appendices/appendix-16.html');run('assets/js/hardware-chapter.js',circuit);
 for(let n=0;n<8;n++){
   const bits=[(n>>2)&1,(n>>1)&1,n&1];
   circuit.querySelectorAll('[data-adder-bit]').forEach((b,i)=>{if((b.attrs['aria-pressed']==='true')!==Boolean(bits[i]))b.fire('click');});
@@ -46,7 +46,7 @@ for(let n=0;n<8;n++){
   assert.equal(circuit.getElementById('adder-s').textContent,`S = ${sum%2}`);
   assert.equal(circuit.getElementById('adder-cout').textContent,`Cout = ${Math.floor(sum/2)}`);
 }
-const memory=documentFrom('chapter-hardware.html');memory.getElementById('access-pattern').value='1:0';run('hardware-chapter.js',memory);
+const memory=documentFrom('chapters/chapter-hardware.html');memory.getElementById('access-pattern').value='1:0';run('assets/js/hardware-chapter.js',memory);
 for(const [value,count] of [['1:0',4],['1:1',5],['2:0',8],['8:0',32]]){
  memory.getElementById('access-pattern').value=value;memory.getElementById('access-pattern').fire('change');
  assert.equal(memory.getElementById('access-segments').children.length,count);
@@ -58,16 +58,16 @@ for(const [value,count] of [['1:0',4],['1:1',5],['2:0',8],['8:0',32]]){
  });
  assert(memory.getElementById('access-result').textContent.includes(`覆盖范围合计 ${count*32} 字节`));
 }
-const driver=documentFrom('chapter-02.html');driver.getElementById('launch-threads').value=64;run('driver-chapter.js',driver);
+const driver=documentFrom('chapters/chapter-02.html');driver.getElementById('launch-threads').value=64;run('assets/js/driver-chapter.js',driver);
 for(const t of [32,48,64,128]){driver.getElementById('launch-threads').value=t;driver.getElementById('launch-threads').fire('change');assert.equal(driver.getElementById('launch-blocks').children.length,Math.ceil(100/t));assert.equal(driver.querySelectorAll('.launch-warp').length,Math.ceil(100/t)*Math.ceil(t/32));}
-const fp=documentFrom('appendix-14.html');fp.getElementById('fp-base').value=1024;run('numeric-experiments.js',fp);
+const fp=documentFrom('appendices/appendix-14.html');fp.getElementById('fp-base').value=1024;run('assets/js/numeric-experiments.js',fp);
 for(const [x,y] of [[1024,1025],[16777215,16777216],[16777216,16777216],[16777218,16777220]]){fp.getElementById('fp-base').value=x;fp.getElementById('fp-base').fire('change');assert(fp.getElementById('fp-result').textContent.includes(`FP32 舍入结果：${y}`));}
 
-const src=fs.readFileSync(root+'review-questions.js','utf8');
+const src=fs.readFileSync(root+'assets/js/review-questions.js','utf8');
 const banks=vm.runInNewContext(src.replace('  const el = (tag, text, className) => {','  return banks;\n  const el = (tag, text, className) => {'));
 const doc=new E('document');doc.createElement=t=>new E(t);doc.getElementById=id=>doc.querySelector('#'+id);
 for(const key of Object.keys(banks))doc.append(new E('section',{id:key}));
-run('review-questions.js',doc);
+run('assets/js/review-questions.js',doc);
 let tests=0;
 for(const [key,questions] of Object.entries(banks)){
   const section=doc.getElementById(key),fields=section.querySelectorAll('.review-question');
@@ -81,9 +81,9 @@ for(const [key,questions] of Object.entries(banks)){
   assert(section.querySelectorAll('.review-feedback').every(n=>n.children.length===0));
 }
 console.log(`PASS: migrated CPU budget + five mechanism modes, 8 adder combinations, 4 access patterns, 4 launch configurations, 4 FP32 cases, ${tests} answer choices + resets (mock DOM; not browser rendering).`);
-const gemm=documentFrom('chapter-matrix.html');
+const gemm=documentFrom('chapters/chapter-matrix.html');
 for(const [id,v] of Object.entries({'gemm-bm':64,'gemm-bn':64,'gemm-bk':16,'gemm-stages':2}))gemm.getElementById(id).value=v;
-run('matrix-chapter.js',gemm);
+run('assets/js/matrix-chapter.js',gemm);
 let cases=0;
 for(const bm of [32,64])for(const bn of [32,64])for(const bk of [16,32])for(const stages of [1,2]){
   for(const [id,v] of Object.entries({'gemm-bm':bm,'gemm-bn':bn,'gemm-bk':bk,'gemm-stages':stages})){gemm.getElementById(id).value=v;gemm.getElementById(id).fire('change');}
@@ -104,8 +104,8 @@ for(const bm of [32,64])for(const bn of [32,64])for(const bk of [16,32])for(cons
   gemm.getElementById('gemm-prev').fire('click');assert(!gemm.getElementById('gemm-next').disabled);cases++;
 }
 console.log(`PASS: ${cases} matrix tiling/buffering configurations, K rounds, selection, budgets and navigation boundaries.`);
-const pathdoc=documentFrom('chapter-hardware.html');
-pathdoc.getElementById('path-operation').value='add';pathdoc.getElementById('path-mask').value='all';run('concept-diagrams.js',pathdoc);
+const pathdoc=documentFrom('chapters/chapter-hardware.html');
+pathdoc.getElementById('path-operation').value='add';pathdoc.getElementById('path-mask').value='all';run('assets/js/concept-diagrams.js',pathdoc);
 for(const operation of ['add','mul'])for(const mask of ['all','partial'])for(let stage=0;stage<3;stage++){
  pathdoc.getElementById('path-operation').value=operation;pathdoc.getElementById('path-operation').fire('change');
  pathdoc.getElementById('path-mask').value=mask;pathdoc.getElementById('path-mask').fire('change');
@@ -115,13 +115,13 @@ for(const operation of ['add','mul'])for(const mask of ['all','partial'])for(let
  });
  assert.equal(pathdoc.querySelectorAll('[data-path-stage]').filter(b=>b.attrs['aria-pressed']==='true').length,1);
 }
-const resident=documentFrom('appendix-06.html');run('learning-figures.js',resident);
+const resident=documentFrom('appendices/appendix-06.html');run('assets/js/learning-figures.js',resident);
 for(let i=0;i<3;i++){
  resident.querySelectorAll('[data-resident-step]')[i].fire('click');
  assert(resident.getElementById('resident-w0-values').textContent.includes(i===2?'R0 = 2':'R0 = 等待'));
  assert.equal(resident.getElementById('resident-read-wire').classList.contains('dv-muted'),i!==1);
 }
-const mat=documentFrom('appendix-15.html');mat.getElementById('matrix-output').value=0;run('numeric-experiments.js',mat);
+const mat=documentFrom('appendices/appendix-15.html');mat.getElementById('matrix-output').value=0;run('assets/js/numeric-experiments.js',mat);
 for(let i=0;i<4;i++){
  mat.getElementById('matrix-output').value=i;mat.getElementById('matrix-output').fire('change');
  assert.equal(mat.querySelectorAll('.matrix-selected').length,5);
@@ -144,7 +144,7 @@ for(const bm of [32,64])for(const bn of [32,64])for(const bk of [16,32]){
 console.log(`PASS: 12 datapath snapshots, 3 residency events, 4 selected matrix elements, ${spatialCases} spatial tile states.`);
 
 // Structural checks across the offline book (including source SVG references).
-const path=require('path'),pages=fs.readdirSync(root).filter(f=>f.endsWith('.html'));
+const path=require('path'),pages=['index.html', ...['chapters','appendices','topics'].flatMap(dir=>fs.readdirSync(root+dir).filter(f=>f.endsWith('.html')).map(f=>dir+'/'+f))];
 const htmls=new Map(pages.map(f=>[f,fs.readFileSync(root+f,'utf8')]));
 const ids=new Map();
 for(const [f,html] of htmls){
@@ -156,16 +156,16 @@ for(const [f,html] of htmls){
 let links=0;
 for(const [f,html] of htmls)for(const m of html.matchAll(/\b(?:href|src)="([^"]+)"/g)){
  const url=m[1];if(/^(?:[a-z]+:|\/\/)/i.test(url))continue;
- const [p,hash]=url.split('#'),target=p.split('?')[0]||f;
+ const [p,hash]=url.split('#'),target=p ? path.posix.normalize(path.posix.join(path.posix.dirname(f),p.split('?')[0])) : f;
  assert(fs.existsSync(root+target),f+' missing local file '+url);
  if(hash&&ids.has(target)) assert(ids.get(target).has(decodeURIComponent(hash)),f+' missing anchor '+url);
  links++;
 }
 console.log(`PASS: ${pages.length} HTML pages, unique IDs, balanced figure/SVG/section/table tags, SVG markers and ${links} local references.`);
-const bits=htmls.get('appendix-14.html').match(/<figure[^>]+id="fp32-bit-layout"[\s\S]*?<\/figure>/)[0];
+const bits=htmls.get('appendices/appendix-14.html').match(/<figure[^>]+id="fp32-bit-layout"[\s\S]*?<\/figure>/)[0];
 const bitRects=[...bits.matchAll(/<rect x="([0-9]+)" y="85" width="25"/g)].map(m=>Number(m[1]));
 assert.deepEqual(bitRects,Array.from({length:32},(_,i)=>45+25*i),'FP32 cells must form 32 contiguous positions');
-const smFigure=htmls.get('appendix-05.html').match(/<figure[^>]+id="sm-functional-wires"[\s\S]*?<\/figure>/)[0];
+const smFigure=htmls.get('appendices/appendix-05.html').match(/<figure[^>]+id="sm-functional-wires"[\s\S]*?<\/figure>/)[0];
 assert(smFigure.includes('width="860" height="590"'));
 assert(smFigure.includes('M760 580 V670'));
 console.log('PASS: FP32 bit positions and local/external storage geometry.');

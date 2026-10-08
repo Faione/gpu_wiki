@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 15：矩阵指令与 Tensor Core · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/driver-chapter.css?v=2"><link rel="stylesheet" href="../assets/css/reading-nav.css"><link rel="stylesheet" href="../assets/css/review-questions.css"><link rel="stylesheet" href="../assets/css/matrix-reference.css">
+<script src="../assets/js/numeric-experiments.js" defer></script><script src="../assets/js/review-questions.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script><link rel="stylesheet" href="../assets/css/concept-diagrams.css"></head>
+<body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="matrix-instructions"><h2>附录 15：矩阵指令与 Tensor Core</h2>
+<p>本篇以同一个 <code>16×16</code> 矩阵乘法为例，对照 CPU 循环、普通 GPU 线程与 Warp 级矩阵指令。重点是：<strong>谁持有部分和，哪一段代码表达乘加，以及 Tensor Core 承担什么工作。</strong>这里采用经典 WMMA／寄存器片段模型，不将它推广为所有代际矩阵硬件的统一实现。</p>
+<p>若要先建立从软件到硬件的完整链路，可阅读<a href="../chapters/chapter-matrix.html">第四章：矩阵乘法的软硬件实现</a>。本篇作为指令与接口参考。</p>
+<h3 id="matrix-math">附15.1 一次矩阵乘加计算了什么</h3>
+<p><code>D = A × B + C</code> 中，若 A 为 M×K、B 为 K×N，则 C、D 都是 M×N。每个输出 <code>D[i,j] = Σ A[i,k] × B[k,j] + C[i,j]</code>；K 是每个输出累加的乘积数量。</p>
+<figure class="learning-figure"><h4>图 附15-1 · 由行与列得到一个输出</h4><div class="matrix-coordinate-example"><div><strong>A</strong><div class="matrix-number-grid"><span data-matrix-cell="0-0-0">1</span><span data-matrix-cell="0-0-1">2</span><span data-matrix-cell="0-1-0">3</span><span data-matrix-cell="0-1-1">4</span></div></div><span class="matrix-equals" aria-hidden="true">×</span><div><strong>B</strong><div class="matrix-number-grid"><span data-matrix-cell="1-0-0">5</span><span data-matrix-cell="1-0-1">6</span><span data-matrix-cell="1-1-0">7</span><span data-matrix-cell="1-1-1">8</span></div></div><span class="matrix-equals" aria-hidden="true">=</span><div><strong>D（C = 0）</strong><div class="matrix-number-grid"><span data-matrix-cell="2-0-0">19</span><span data-matrix-cell="2-0-1">22</span><span data-matrix-cell="2-1-0">43</span><span data-matrix-cell="2-1-1">50</span></div></div></div><label for="matrix-output">查看一个输出元素</label> <select id="matrix-output"><option value="0">D[0,0]</option><option value="1">D[0,1]</option><option value="2">D[1,0]</option><option value="3">D[1,1]</option></select><p id="matrix-explanation" aria-live="polite"></p><figcaption>2×2 是数学示例，不对应某个 Tensor Core 的物理尺寸或指令形状。多个输出复用 A 的行、B 的列，专用硬件可针对这种规律组织数据供给与乘加。</figcaption></figure>
+<h3 id="matrix-layers">附15.2 从 CPU 循环到普通 GPU 乘加</h3>
+<p>下面固定 <code>D = A × B</code>，A、B、D 均为行主序 16×16 矩阵，初始累加值为 0。<code>A[i * 16 + k]</code> 表示第 i 行、第 k 列，16 是一行的元素数。共有 256 个输出，每个输出累加 16 个乘积，即 4096 次标量乘加；按乘、加各计一次，共 8192 FLOP。</p>
+<h4>CPU：代码显式遍历输出与归约维度</h4>
+<pre><code>void matmul_cpu(const float* A, const float* B, float* D) {
+    for (int i = 0; i &lt; 16; ++i) {
+        for (int j = 0; j &lt; 16; ++j) {
+            float acc = 0.0f;
+            for (int k = 0; k &lt; 16; ++k)
+                acc = std::fma(A[i * 16 + k], B[k * 16 + j], acc);
+            D[i * 16 + j] = acc;
+        }
+    }
+}</code></pre>
+<p><code>i、j</code> 选择一个输出，<code>k</code> 沿 A 的一行与 B 的一列累加；<code>acc</code> 暂存该输出的部分和。这是表达数学含义的参考实现，需包含 <code>&lt;cmath&gt;</code>。源代码只有一个循环执行者，不表示 CPU 硬件只能一次算一个数：编译器可变换代码，优化矩阵库还会使用分块、SIMD、多个累加器和多核并行。</p>
+<h4>普通 GPU：把不同输出交给不同线程</h4>
+<pre><code>__global__ void matmul_simt(const float* A, const float* B, float* D) {
+    const int t = threadIdx.x;
+    const int i = t / 16, j = t % 16;
+    float acc = 0.0f;
+    for (int k = 0; k &lt; 16; ++k)
+        acc = fmaf(A[i * 16 + k], B[k * 16 + j], acc);
+    D[i * 16 + j] = acc;
+}
+// 限定启动配置：1 个 Block，256 个线程；参数均为设备指针
+matmul_simt&lt;&lt;&lt;1, 256&gt;&gt;&gt;(dA, dB, dD);</code></pre>
+<p>外层两个循环改为线程索引；T0 负责 D[0,0]，T1 负责 D[0,1]，T16 负责 D[1,0]。每个线程仍执行 16 轮普通浮点乘加，保留自己的 <code>acc</code>。这段代码展示的是普通 SIMT/FMA 路径，<strong>CUDA Kernel 本身不等于使用 Tensor Core</strong>，标量循环也不保证自动变为矩阵指令。</p>
+<p>同一 A 元素会被多个输出列使用，同一 B 元素会被多个输出行使用；上面的简单 Kernel 没有显式组织共享内存分块。其多次加载可能命中缓存，不能按源码加载次数直接计算 DRAM 流量。它是工作分配示例，而非优化后的 GPU GEMM。</p>
+<h3 id="matrix-fragments">附15.3 矩阵数据如何分布到线程</h3>
+<p>普通 SIMT 加法常可理解为“每个线程计算自己的一个结果”。Warp 级 MMA 则是<strong>一组线程共同提供矩阵操作数，并共同持有输出片段</strong>。每个线程仍有自己的寄存器，但这些寄存器中的值合起来构成矩阵块。</p>
+<div class="table-scroll"><table class="comparison"><caption>同一个 16×16 输出块：软件如何分配工作</caption><thead><tr><th>实现</th><th>谁负责这 256 个输出</th><th>部分和如何表达</th></tr></thead><tbody><tr><td>上述 CPU 参考循环</td><td>一个软件线程遍历 i、j</td><td>源码中一次选定一个输出的 acc</td></tr><tr><td>上述普通 GPU Kernel</td><td>256 个线程，分为 8 个 Warp；每线程负责一个输出</td><td>每个线程自己的标量 acc</td></tr><tr><td>下文 WMMA Kernel</td><td>一个 Warp 的 32 个线程共同负责一个 16×16 块</td><td>输出片段分布在各线程的 accumulator fragment 中</td></tr></tbody></table></div>
+<p>第三行不是“32 个线程各算一个输出”，也不是“每线程各算整块”。整个 Warp 合起来持有并更新 256 个输出；每线程的具体元素位置由接口实现决定。线程数减少不等于硬件工作量减少：三种方法仍需完成同一批乘积与累加。</p>
+<p>在 CUDA WMMA 中，<code>fragment</code> 封装每线程持有的那部分数据，元素映射不是可随意假设的通用布局。Warp 内线程应按接口要求共同执行相关操作；只让线程 0 调用 <code>mma_sync</code> 不能代表整个 Warp 完成计算。同步式矩阵操作也不代替此前生产输入数据所需的内存同步。</p>
+<h3 id="matrix-ptx">附15.4 解读一条具体矩阵指令</h3>
+<p><strong>Tensor Core 是 SM 内执行受支持矩阵乘加的专用算术资源，不是软件线程，也不是一个独立运行 Kernel 的 CPU 核心。</strong>软件仍需安排输入、循环、同步和输出。三种名称分别处于不同层次：</p>
+<div class="table-scroll"><table class="comparison"><thead><tr><th>层次</th><th>例子</th><th>含义</th></tr></thead><tbody><tr><td>CUDA C++ 接口</td><td><code>wmma::mma_sync</code></td><td>程序员表达一次受约束的 Warp 协作矩阵乘加</td></tr><tr><td>指令表达</td><td>PTX <code>mma</code>；编译后为目标机器指令</td><td>规定逻辑矩阵形状、类型和操作数约定</td></tr><tr><td>物理执行资源</td><td>Tensor Core</td><td>接收相应机器指令，在专用乘加数据通路中执行</td></tr></tbody></table></div>
+<p>一次 API 调用不一定对应一条机器指令，一条矩阵指令也不等于占用一个 Tensor Core 一个周期。下面选择 PTX 的一种具体形式观察其语义。</p>
+<pre><code>mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+    d, a, b, c;</code></pre>
+<p>这是省略具体寄存器列表的 PTX 示意，适用于支持该形式的目标（此 FP16 形式要求 sm_80 或更新的受支持目标）。A 是 16×16，B 是 16×8，C 与 D 是 16×8；一个 Warp 协作完成这项逻辑操作。</p>
+<div class="summary-table"><table><caption>指令字段的含义</caption><thead><tr><th>字段</th><th>解释</th></tr></thead><tbody><tr><td>m16n8k16</td><td>M=16、N=8、K=16，不是 16 个线程或 16 个周期</td></tr><tr><td>row.col</td><td>A、B 的布局约定；实际寄存器片段映射需查指令文档</td></tr><tr><td>f32.f16.f16.f32</td><td>按 D、A、B、C 的次序指定类型：FP32 输出／累加，FP16 输入</td></tr><tr><td>sync.aligned</td><td>要求 Warp 按规定共同执行该指令；这里的 aligned 不是数组地址对齐的替代检查</td></tr></tbody></table></div>
+<p>按一次乘法与一次加法各计一个浮点操作，工作量为 <code>2×16×8×16 = 4096 FLOP</code>。这是整个 Warp 这项操作的计数，不应再乘 32，也不是每周期性能。实际寄存器操作数、执行时间及支持类型由架构与指令形式决定。</p>
+<h3 id="matrix-precision">附15.5 混合精度能保留什么、不能保留什么</h3>
+<p>常见方案使用较低精度输入、较高精度累加。例如 FP16 输入配 FP32 累加，可以降低输入存储与传输成本，并让累加使用更宽的表示。但输入转换时已丢失的信息不会由 FP32 累加恢复。</p><p>FP16 与 BF16 都占 16 位，但前者通常有更多有效精度，后者有更宽指数范围；FP32 有更高有效精度。具体矩阵指令支持哪些组合取决于架构。矩阵累加的次序及舍入规则也不应简单等同于整个表达式只舍入一次的标量 FMA。</p>
+<h3 id="matrix-workflow">附15.6 用 WMMA 表达同一个矩阵乘法</h3>
+<p>以下 Kernel 将完整的 16×16 乘法交给一个 Warp。A、B 改用 FP16，D 与累加状态用 FP32；矩阵仍为行主序。完整源码包含 <code>&lt;cuda_fp16.h&gt;</code> 和 <code>&lt;mma.h&gt;</code>，并提供主机端分配、复制、启动与结果检查。</p>
+<pre><code>__global__ void matmul_wmma(const __half* A, const __half* B, float* D) {
+    using namespace nvcuda;
+    wmma::fragment&lt;wmma::matrix_a, 16, 16, 16, __half, wmma::row_major&gt; a;
+    wmma::fragment&lt;wmma::matrix_b, 16, 16, 16, __half, wmma::row_major&gt; b;
+    wmma::fragment&lt;wmma::accumulator, 16, 16, 16, float&gt; acc;
+    wmma::fill_fragment(acc, 0.0f);
+    wmma::load_matrix_sync(a, A, 16);
+    wmma::load_matrix_sync(b, B, 16);
+    wmma::mma_sync(acc, a, b, acc);
+    wmma::store_matrix_sync(D, acc, 16, wmma::mem_row_major);
+}
+// 完整 Warp 协作；不能改为 1 个线程或用 lane==0 包围上述代码
+matmul_wmma&lt;&lt;&lt;1, 32&gt;&gt;&gt;(dAh, dBh, dD);</code></pre>
+<div class="table-scroll"><table class="comparison"><caption>代码与数据状态逐步对应</caption><thead><tr><th>操作</th><th>发生了什么</th><th>对应硬件职责</th></tr></thead><tbody><tr><td><code>fragment</code> 声明与 <code>fill_fragment</code></td><td>各线程拥有片段变量，整个 Warp 的累加块初值为 0</td><td>编译器组织线程状态；此例片段通常由寄存器承载</td></tr><tr><td><code>load_matrix_sync</code></td><td>按行距 16 从 A、B 读取矩阵块，构成各线程的操作数片段</td><td>加载与数据供给路径；不是 Tensor Core 自行去显存寻找矩阵</td></tr><tr><td><code>mma_sync</code></td><td>整个 Warp 协作执行 acc ← A×B+acc，更新 256 个结果</td><td>编译为目标支持的矩阵指令，由 Tensor Core 路径执行</td></tr><tr><td><code>store_matrix_sync</code></td><td>把分散的输出片段按行主序写入 D</td><td>存储路径；不是每线程重复写完整矩阵</td></tr></tbody></table></div>
+<p><strong>源码中的 k 循环去哪了？</strong>普通版本用 16 次标量 FMA 表达一个输出的归约；此处一次 WMMA 操作已表达整个 16×16×16 子问题，包括 K=16 的归约。因此代码中不再显式写这 16 轮，但数学工作没有消失。一次协作调用共表达 8192 FLOP，既不再乘 32，也不能由此推导加速倍数。它与附15.4 的 PTX 16×8×16 形状不同，编译器可能用多条目标指令实现。</p>
+<p>如果 K=64，仍需在外层分四轮：每轮取 A 的 16 列和 B 的 16 行，反复更新同一个 acc。扩大 M、N 时还要分配更多输出块；实际高性能实现通常加入共享内存复用和搬运／计算流水。数据反馈与双缓冲见<a href="../chapters/chapter-matrix.html#gemm-dataflow">第四章 4.4</a>和<a href="../chapters/chapter-matrix.html#gemm-hardware">4.5</a>。本例直接从全局地址加载，不包含这些优化。</p>
+<details><summary>运行条件与完整示例</summary>
+<p>源码：<a href="../examples/matmul16.cu">matmul16.cu</a> 与同目录的 <a href="../examples/matmul16_cpu.hpp">CPU 参考函数</a>。本例只有两种固定启动：普通 GPU 版本 1×256，WMMA 版本 1×32；不能直接修改线程数或矩阵尺寸来扩展它。</p>
+<p>在有 CUDA Toolkit 与受支持 NVIDIA GPU 的机器上编译。例如目标为 SM80 时，在项目根目录执行：</p>
+<pre><code>nvcc -std=c++17 -O2 -arch=sm_80 examples/matmul16.cu -o /tmp/matmul16
+/tmp/matmul16</code></pre>
+<p>目标选项应匹配设备及 Toolkit；FP16 WMMA 要求支持该接口的 SM70 或更新目标。本例使用 cudaMalloc 的对齐基址，输入／输出行距均为 16 元素，满足接口的 32 字节指针对齐与行距约束；所有 32 个线程一致执行，启动前输入复制已完成。</p>
+<p>测试输入为可精确表示的小整数；CPU 与普通 GPU 使用同一批 FP16 输入转回的 FP32 值，以避免比较不同输入。程序检查全部 256 个输出及非有限值，不做计时。一般浮点输入应按需求设置误差容差，不能照搬本例的精确相等检查。当前仅验证了数值模型和文档结构；CPU 编译因 Xcode 许可未确认而未完成，本环境也没有 nvcc，CUDA 代码尚未编译或在设备上验证。</p>
+</details>
+<h3 id="matrix-conditions">附15.7 专用单元何时有效</h3>
+<p>Tensor Core 的优势来自<strong>面向规则矩阵乘加的专用吞吐能力</strong>，而不只是代码行数更少。矩阵操作将多组乘法和累加组织为受约束的整体，便于专用数据通路供应操作数并更新累加状态；多个 SM 再并行处理不同输出块。其内部并行宽度、分解方式和耗时由具体架构决定，不能把 16×16×16 理解为物理电路尺寸或“一周期完成”。</p>
+<div class="table-scroll"><table class="comparison"><caption>CPU、普通 GPU 与矩阵硬件的优势与代价</caption><thead><tr><th>实现路径</th><th>主要优势</th><th>条件与限制</th></tr></thead><tbody><tr><td>优化 CPU GEMM</td><td>SIMD／多核与缓存分块；数据在主机时无须为单次运算额外搬到独立 GPU</td><td>收益随 CPU 型号、线程数、库、形状和精度变化；部分 CPU 也有矩阵扩展，不能概括为只能标量计算</td></tr><tr><td>普通 GPU FMA</td><td>大量独立输出并行；每线程可显式安排标量运算与控制</td><td>仍需优化访存与复用；规则 GEMM 未必充分利用设备的专用矩阵吞吐</td></tr><tr><td>GPU 矩阵指令／Tensor Core</td><td>在支持的类型和形状下提供高密度矩阵乘加吞吐；适合有足够工作量、数据复用良好的矩阵任务</td><td>布局、片段、协作和精度有约束；数据供给不足时，专用单元同样会等待</td></tr></tbody></table></div>
+<p>本例 FP16 输入的每个元素占用 FP32 的一半字节，因此输入存储和搬运有机会减少；这是<strong>数据类型变化</strong>的收益，不应全部归因于 Tensor Core。类似地，共享内存分块带来的复用也可用于普通 GPU FMA，不是矩阵指令独有。</p>
+<p><strong>这个 16×16 示例不用于证明 GPU 更快。</strong>它仅有一个工作块，无法充分使用整颗 GPU；提交、输入转换或主机设备复制可能超过计算本身。实际比较应使用优化 CPU BLAS 与 cuBLAS／cuBLASLt 基线，固定矩阵尺寸、布局、数值要求，并分别记录设备计算时间和包含搬运／转换的端到端时间。CPU 的朴素三重循环不能代替这一基线。</p>
+<p>大矩阵或批量矩阵通常更容易提供足够工作并摊薄开销；小尺寸、边界浪费、精度不匹配或供给不足都会限制收益。矩阵尺寸不满足 tile 形状时，应填充或单独处理边界，而非让必要参与线程跳过 WMMA。稀疏矩阵也不会自动受益于稠密矩阵路径；专门稀疏指令另有条件。</p>
+<p><strong>核心内容：</strong>CPU、普通 GPU 和 Tensor Core 计算的是同一个矩阵乘法，差异在工作组织与执行资源。矩阵指令把线程协作的乘加子问题交给专用硬件；优化目标是让输入供给、片上复用与计算吞吐相匹配，而非仅把循环换成一个 API。</p>
+<p class="model-note">性能分析与实现参考：<a href="https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html">NVIDIA 矩阵乘法性能指南</a>、<a href="https://docs.nvidia.com/cutlass/latest/media/docs/cpp/efficient_gemm.html">CUTLASS：分层分块与流水</a>、<a href="https://www.intel.com/content/www/us/en/products/docs/accelerator-engines/what-is-intel-amx.html">Intel AMX：CPU 的矩阵执行资源</a>。本文没有设备实测结果或通用加速倍数。</p>
+<p class="model-note">参考：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma">PTX mma 指令</a>、<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cpp-language-extensions.html">CUDA WMMA 接口与约束</a>、<a href="https://docs.nvidia.com/cuda/hopper-tuning-guide/">Hopper 的矩阵与数据搬运能力</a>。返回 <a href="../chapters/chapter-hardware.html#matrix-unit">第二章计算部件</a>。</p>
+</section></main></body></html>

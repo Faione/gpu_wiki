@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 12：SIMD 与 SIMT 的差异及适用条件 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/simd-warp.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="comparison"><h2>附录 12：SIMD 与 SIMT 的差异及适用条件</h2>
+<h3 id="simd-simt-comparison">附12.1 同一计算任务的两种表达</h3>
+<div class="summary-table"><table><caption>以 CPU 向量 SIMD 与 NVIDIA SIMT 为例</caption><thead><tr><th scope="col">比较项</th><th scope="col">SIMD</th><th scope="col">SIMT</th></tr></thead><tbody>
+<tr><th scope="row">代码描述的对象</th><td>向量中的多个数据元素；也可由编译器从标量循环生成</td><td>每个线程的计算、分支与局部状态</td></tr>
+<tr><th scope="row">数据归属</th><td>一个线程的向量寄存器包含多个元素</td><td>各线程有自己的逻辑寄存器值</td></tr>
+<tr><th scope="row">lane 的含义</th><td>向量元素位置，不是独立线程</td><td>Warp 内的线程位置</td></tr>
+<tr><th scope="row">不同分支</th><td>由程序或编译器组织为掩码、选择等向量操作</td><td>各线程可选择不同路径；编译器与硬件组织相应指令及参与集合</td></tr>
+<tr><th scope="row">一次共同指令</th><td>规定一种操作，作用于参与的数据元素</td><td>规定一种操作，由参与线程使用各自数据执行</td></tr>
+<tr><th scope="row">并行宽度</th><td>与向量指令、元素类型及架构有关</td><td>NVIDIA Warp 为 32 个线程；活跃线程数与物理执行宽度不必等于 32</td></tr>
+</tbody></table></div>
+<figure class="experiment"><pre>同一任务：四个元素各加 1
+
+SIMD：一个线程的向量操作
+[10, 20, 30, 40] + [1, 1, 1, 1] → [11, 21, 31, 41]
+
+SIMT：同一 Warp 中四个线程的共同操作
+T0: 10+1 → 11    T1: 20+1 → 21
+T2: 30+1 → 31    T3: 40+1 → 41</pre><figcaption>算术结果相同，区别在于软件对象及执行状态的组织。SIMT 可以使用 SIMD 式数据通路；两者不是互斥的硬件标签。</figcaption></figure>
+<h3 id="simt-complexity">附12.2 算法复杂度与指令执行方式</h3>
+  <p class="key-insight">SIMT 更便于直接表达每个线程的分支、循环和局部状态；它不意味着单条指令能完成更复杂的运算，也不保证复杂算法执行得更快。</p>
+  <div class="summary-table"><table><caption>“更复杂”所指的不同层次</caption><thead><tr><th scope="col">比较方面</th><th scope="col">SIMD 与 SIMT 的关系</th></tr></thead><tbody><tr><th scope="row">算法表达</th><td>SIMD 面向向量元素，SIMT 面向有各自状态的线程。SIMD 也能通过掩码、循环及标量代码配合实现复杂算法。</td></tr><tr><th scope="row">单条指令能力</th><td>由具体指令集和执行硬件决定。SIMT 名称本身不代表支持更多运算或更复杂的指令。</td></tr><tr><th scope="row">执行效率</th><td>取决于并行性、路径一致性与数据供给等条件。线程间路径越不同，共同执行的收益可能越低。</td></tr></tbody></table></div>
+  <p>例如，同一 Warp 中的线程可以分别执行加法与乘法。以下代码假定使用一维 Block，各线程的 <code>a</code>、<code>b</code>、<code>r</code> 都是自身的局部值：</p>
+  <pre>if (threadIdx.x % 2 == 0)
+    r = a + b;
+else
+    r = a * b;</pre>
+  <div class="summary-table"><table><caption>同一 Warp 的四个线程：不同操作如何执行</caption><thead><tr><th scope="col">概念上的指令</th><th scope="col">T0</th><th scope="col">T1</th><th scope="col">T2</th><th scope="col">T3</th></tr></thead><tbody><tr><th scope="row">加法</th><td>参与</td><td>不参与</td><td>参与</td><td>不参与</td></tr><tr><th scope="row">乘法</th><td>不参与</td><td>参与</td><td>不参与</td><td>参与</td></tr></tbody></table></div>
+  <p>各线程最终执行了不同操作，但一次共同指令仍规定同一种操作。上表不是“同一次发射中，每个通道接收任意不同的指令”，也不规定真实执行顺序和周期数。编译器可能采用分支或谓词化；不同指令的执行能否交叠取决于依赖和硬件资源。</p>
+  <p>若线程各自循环不同次数，SIMT 也允许直接编写该循环；已结束的线程不再参与剩余迭代，成组执行的利用率可能下降。SIMD 可以用向量掩码组织同类计算，由程序或编译器安排哪些元素继续参与。</p>
+  <p class="model-note">从 NVIDIA Volta（计算能力 7.0）开始，独立线程调度维护每线程的执行状态，支持更灵活的等待和推进，但仍将同一 Warp 中的活跃线程组织起来执行共同指令。它不为每个线程提供一套独占的指令发射通路。参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/03-advanced/advanced-kernel-programming.html">NVIDIA：SIMT 与独立线程调度</a>。</p>
+  <details><summary>自测：一个线程做加法，另一个做乘法，是否违反 SIMT？</summary><p>不违反。程序可以描述不同操作，执行时组织为相应指令及其参与线程集合。应区分“整个程序允许线程执行不同操作”和“一次共同指令是否允许任意不同操作”。</p></details>
+<h3 id="writeback-atomicity">附12.3 寄存器写回、内存存储与同步</h3>
+<p>SIMD 通常将多个元素表达为一个线程的向量状态，SIMT 则保留多个线程各自的状态。这个区别影响协作方式，但不能据此认为 SIMD 的写回天然更原子。</p>
+<p><strong>寄存器写回：</strong>SIMT 中 T0 的 <code>r</code> 与 T1 的 <code>r</code> 属于不同线程，写入各自的寄存器不会相互覆盖，无需为每次加法添加线程同步。SIMD 写入向量寄存器时，整个结果就绪同样要求所需元素的结果均已产生；一条向量指令也可能在硬件内分多拍执行。</p>
+<p><strong>内存存储：</strong>竞争取决于访问地址及访问之间的顺序关系，而不是参与线程的数量。以下假设 i 是每个线程不同的索引，且没有其他冲突访问：</p>
+<pre><code>output[i] = r;  // 写不同元素：这些写入之间没有数据竞争
+output[0] = r;  // 多个线程普通写同一位置：存在竞争</code></pre>
+<p>一条 SIMD 存储指令也不自动保证整个向量对其他执行者“同时可见”。<strong>内存原子性</strong>是指访问在相应观察范围内不可分割；其保证取决于具体指令、访问大小、对齐和体系结构，而非“是否只有一条指令”。寄存器结果就绪、内存写入对其他线程可见、整组写入具有原子性，是不同的问题。</p>
+<p><strong>跨线程协作：</strong>一个线程需要读取另一个线程的结果时，必须使用符合该通信方式的顺序与同步机制。同属一个 Warp 并不足以省略必要同步；多个线程独立计算并写入互不重叠的输出，则不因使用 SIMT 就必须互相等待。多个线程更新同一共享值时，通常需要原子操作或避免冲突的算法；写完后加一次屏障不能修复此前的竞争。</p>
+<p class="key-insight">SIMD 将元素间操作表达在一个线程内部，SIMT 将跨线程协作显式暴露给程序。需要区分的是状态归属和通信方式，而不是“SIMD 原子、SIMT 不原子”。</p>
+<p class="model-note">参考：<a href="https://docs.nvidia.com/cuda/archive/13.0.0/cuda-c-programming-guide/index.html#simt-architecture">CUDA：Warp 执行与冲突写入</a>、<a href="https://docs.nvidia.com/cuda/archive/13.0.0/cuda-c-programming-guide/index.html#synchronization-functions">CUDA：同步函数</a>、<a href="https://www.intel.com/content/dam/develop/external/us/en/documents/319433-024-697869.pdf">Intel：指令集扩展与原子访问保证</a>。</p>
+  </section></main></body></html>

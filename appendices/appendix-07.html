@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>附录 7：SIMD 与 SIMT 编程模型 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/learning-figures.css"><link rel="stylesheet" href="../assets/css/reading-nav.css">
+<script src="../assets/js/simd-warp.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script></head><body class="supplement"><header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">学习目录 ↗</a></header><main class="supplement-body" id="top"><section id="question"><h2>附录 7：SIMD 与 SIMT 编程模型</h2>
+<h3 id="programming-views">附7.1 面向向量与面向线程</h3>
+<p>同样是“给数组中的每个元素加 1”，程序可以围绕一组数据编写，也可以围绕一个线程的工作编写。本附录先从这两种编程模型理解 SIMD 与 SIMT，再说明它们如何映射到硬件。</p>
+<div class="summary-table"><table><caption>程序员描述的对象不同</caption><thead><tr><th scope="col">编程模型</th><th scope="col">代码表达</th><th scope="col">程序员组织什么</th></tr></thead><tbody><tr><th scope="row">SIMD：面向向量</th><td>读取一组元素，对整组加 1，再写回</td><td>向量数据、元素位置和参与运算的掩码</td></tr><tr><th scope="row">SIMT：面向线程</th><td>当前线程取得自己的编号，对负责的元素加 1</td><td>每线程的工作、局部变量与控制流，以及线程的启动配置</td></tr></tbody></table></div>
+<pre>// SIMD 视角：向量伪代码，假设一次处理四个元素
+X = load4(input + offset);
+Y = X + broadcast4(1);
+store4(output + offset, Y);
+
+// SIMT 视角：单个线程的代码片段
+i = 当前线程编号;
+output[i] = input[i] + 1;</pre>
+<p>前者的一次向量操作描述多个元素，后者的代码描述一个线程，启动时再指定多少线程执行它。SIMD 也可以由编译器从普通循环自动生成，因此不要求所有源码都显式写出向量。</p>
+<p class="key-insight">编程模型决定“代码以什么为单位描述工作”，硬件执行方式决定“指令如何使用运算资源”。以编程模型比较时，SIMD 面向向量，SIMT 面向线程；在硬件层面，SIMT 可以用 SIMD 式数据通路实现成组运算，两者并非互斥的电路设计。</p>
+</section></main></body></html>
