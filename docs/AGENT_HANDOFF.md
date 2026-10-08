@@ -1,5 +1,14 @@
 # GPU 体系结构学习项目：对话与项目交接
 
+
+### 2026-10-08 Transformer 调研整合
+
+新增第五章 `chapters/chapter-transformer.html`，基于用户提供的 `/Users/fanghaolei/Workplace/Pages/transformer_learning_lab/index.html` 及 app.js 的算法线索重新组织，原调研文件未修改。串联完整 Decoder、张量形状、GPU Kernel/矩阵单元/归约、训练与 Prefill/Decode、KV/参数预算、FlashAttention 与分页缓存，以及 CANN 的迁移边界。
+
+新增独立 CSS/JS、三个交互视图、四道折叠理解检查与 `examples/transformer_reference.py`（PyTorch 2.x，随机两层 Decoder 的缓存等价性参考，不下载模型，不作性能基准）。首页、全书目录、第四章与 Attention Decode 专题已衔接。开源链接核对了官方接口、教程与作者仓库；vLLM 页面明确标注历史 Kernel 文档。
+
+验证：已有三项 Node 回归通过；新增 `node tests/transformer-model.cjs` 验证稠密/online softmax、极端分数与掩码、已知容量、324 组控件配置及 8 种热图状态。26 个 HTML 页的 445 处本地引用、1222 项动态导航目标通过。PyTorch 未安装，参考程序只做 Python AST 语法检查，未执行 CPU/CUDA/MPS。浏览器工具禁止 file:// URL，未尝试绕过，未完成浏览器视觉验收。不得将模拟 DOM 检查表述为设备执行或浏览器测试。
+
 ### 2026-10-08 仓库目录整理
 
 根目录保留首页与 README；正文移至 `chapters/`，附录移至 `appendices/`，独立专题移至 `topics/`，样式与脚本分别归入 `assets/css/`、`assets/js/`，维护文档集中于 `docs/`。`examples/`、`tests/` 保留原用途。本文中的文件路径以仓库根目录为基准。

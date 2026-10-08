@@ -9,12 +9,12 @@
 | 路径 | 内容 |
 | --- | --- |
 | `index.html` | 学习首页与全书入口 |
-| `chapters/` | 四章正文：执行模型、硬件、驱动、矩阵乘法 |
+| `chapters/` | 五章正文：执行模型、硬件、驱动、矩阵乘法、Transformer |
 | `appendices/` | 18 篇机制与指令参考，编号对应首页目录 |
 | `topics/` | Attention Decode 专题与 SIMD/SIMT 专题入口 |
 | `assets/css/` | 公共样式与各章节样式 |
 | `assets/js/` | 交互实验、题库、导航与锚点迁移 |
-| `examples/` | 可下载的 CUDA 与 C++ 教学源码 |
+| `examples/` | 可下载的 CUDA、C++ 与 PyTorch 教学源码 |
 | `tests/` | 页面引用、交互模型与源码一致性检查 |
 | `docs/` | 学习规划、配图规范、评估与历史交接记录 |
 
@@ -36,6 +36,7 @@
 node tests/diagram-regression.cjs
 node tests/matmul16-model.cjs
 node tests/navigation.cjs
+node tests/transformer-model.cjs
 ```
 
 这些检查验证本地引用、模拟 DOM 交互、导航跳转和数值模型，不替代浏览器视觉检查或真实 GPU 测试。
@@ -46,3 +47,9 @@ node tests/navigation.cjs
 c++ -std=c++11 tests/matmul16-cpu.cpp -o /tmp/gpu-arch-matmul16-test
 /tmp/gpu-arch-matmul16-test
 ```
+
+## Transformer 整合
+
+第五章将原 Transformer 学习实验室的算法线索与 GPU 执行模型连接起来，提供 Prefill/Decode 形状、Attention 数值和参数/KV 容量实验，并链接开源实现。页面无需构建、可离线使用。
+
+`python3 examples/transformer_reference.py --device cpu` 可验证随机小模型的完整前向与缓存解码等价性（需要 PyTorch 2.x；可选 `cuda` 或 `mps`）。该程序不下载模型，不是性能基准。

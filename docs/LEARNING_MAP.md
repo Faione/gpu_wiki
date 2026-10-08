@@ -2,7 +2,7 @@
 
 配图规则（2026-09-22）：使用包含、分支、反馈、位置或数量关系帮助理解；以具体数值验证抽象，避免将正文重新装入流程框。修订范围及维护要求见 `docs/DIAGRAM_GUIDELINES.md`。
 
-更新：2026-09-21。当前目标是从已有 CPU／软件经验出发，建立能服务于后续 CANN Transformer 算子优化的 GPU 知识图谱，而非按硬件名词编写百科。
+更新：2026-10-08。当前目标是从已有 CPU／软件经验出发，建立能服务于后续 CANN Transformer 算子优化的 GPU 知识图谱，而非按硬件名词编写百科。
 
 ## 叙述主干
 
@@ -22,9 +22,13 @@
 | 第三章：软件与设备 | 代码与资源 → 启动请求 → 执行 → 完成 | 区分 Kernel、Stream、驻留状态与软件上下文，理解异步执行 |
 | 第四章：矩阵乘法的软硬件实现 | 算子语义 → 软件选择 → 多级分块 → 数据流水 → 矩阵硬件 → 测量 | 分析矩阵复用、片上占用、并行度与流水交叠的取舍，并迁移分析问题到 CANN |
 
+| 第五章：Transformer 的软硬件执行 | 完整模型 → 算子形状 → Kernel 与片上工作 → Prefill/Decode → KV 与带宽 | 区分参数与激活、缓存与硬件 cache，验证因果掩码及分块等价性，按问题阅读开源实现 |
+
 第一章保留 CPU 机制作为过渡，不要求重新系统学习 CPU。第二章是后续算子分析的重点。第三章提供理解程序运行与测量边界所需的软件模型。
 
 第四章 `chapters/chapter-matrix.html` 是前三章的综合应用，采用自顶向下的连续叙述，不替代附录 15 的指令参考。用同一个 M=N=128、K=64 示例连接输出 tile、K 轮次、输入缓冲与累加状态；矩阵硬件分别说明经典 Warp MMA、Hopper WGMMA/TMA、Blackwell SM100 路径，不能将某一路径推广到全部 GPU。新增 14 道理解检查。示例与预算用于教学，不是经过设备实测的优化配置。
+
+第五章 `chapters/chapter-transformer.html` 整合用户的本地 Transformer 学习实验室。采用 Pre-Norm/RoPE/SwiGLU 模型，区分原论文和 GPT-2；三个交互视图展示形状、实际 Attention 权重、参数与 KV 容量。开源路线包括 llm.c、PyTorch SDPA、Triton、FlashAttention、vLLM 和 Ascend samples。单 Query 的分块推导继续链接现有 `topics/attention-decode.html`。
 
 ## 本次内容迁移
 

@@ -8,7 +8,12 @@ const read = name => fs.readFileSync(path.join(root, 'assets/js', name), 'utf8')
 const window = {};
 vm.runInNewContext(read('site-map.js'), { window });
 const book = window.GPU_BOOK;
-assert.equal(book.length, 22);
+assert.equal(book.length, 23);
+assert.equal(book[4].page, "../chapters/chapter-transformer.html");
+for (const item of book) for (const section of item.sections || []) {
+  const file = path.join(root, item.page.replace(/^\.\.\//, ""));
+  assert(fs.readFileSync(file, "utf8").includes(`id="${section.id}"`), "Missing section: " + section.id);
+}
 function check(url, base) {
   const relative = decodeURIComponent(url.pathname.slice(new URL(base).pathname.length));
   const file = path.join(root, relative);

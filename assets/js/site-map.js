@@ -148,6 +148,46 @@ window.GPU_BOOK = [
     ]
   },
   {
+    "page": "../chapters/chapter-transformer.html",
+    "id": "top",
+    "title": "第五章：Transformer 的软硬件执行",
+    "group": "正文",
+    "sections": [
+      {
+        "id": "tf-architecture",
+        "title": "5.1 架构、参数与运行时状态"
+      },
+      {
+        "id": "tf-block",
+        "title": "5.2 完整一层与张量形状"
+      },
+      {
+        "id": "tf-execution",
+        "title": "5.3 从框架到 GPU 执行"
+      },
+      {
+        "id": "tf-attention",
+        "title": "5.4 Attention 数值与分块"
+      },
+      {
+        "id": "tf-phases",
+        "title": "5.5 训练、Prefill 与 Decode"
+      },
+      {
+        "id": "tf-memory",
+        "title": "5.6 参数、KV 与瓶颈"
+      },
+      {
+        "id": "tf-open-source",
+        "title": "5.7 开源实现阅读路线"
+      },
+      {
+        "id": "tf-practice",
+        "title": "5.8 运行与正确性验证"
+      }
+    ]
+  },
+  {
     "page": "../appendices/appendix-01.html",
     "id": "thread-instance",
     "title": "附录 1：线程与执行状态",

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="把 Transformer 算法、张量形状、GPU Kernel、Tensor Core、显存与 KV cache 连接起来的交互教材。">
+<title>第五章：Transformer 的软硬件执行 · GPU 架构实验室</title>
+<link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="../assets/css/simd-warp.css"><link rel="stylesheet" href="../assets/css/reading-nav.css"><link rel="stylesheet" href="../assets/css/transformer-chapter.css">
+<script src="../assets/js/transformer-chapter.js" defer></script><script src="../assets/js/site-map.js" defer></script><script src="../assets/js/reading-nav.js" defer></script>
+</head>
+<body class="supplement transformer-chapter">
+<header class="topbar"><a class="brand" href="../index.html"><span class="brand-mark">G</span><span>GPU 架构实验室</span></a><a href="../index.html">知识地图 ↗</a></header>
+<main class="supplement-body" id="top">
+<header class="supplement-intro"><p class="chapter-label">第五章 · 从 token 到 GPU 上的计算与搬运</p><h1>Transformer 的<br>软硬件执行</h1><p class="lede">Transformer 的计算由线性投影、Attention、归一化和 MLP 等算子组成。本章追踪 token 的表示与张量形状，解释这些算子如何在 GPU 上分配工作、搬运数据并执行计算。</p><p>以单设备上的稠密 Decoder-only 模型为例，采用 Pre-Norm、RoPE 和 SwiGLU，并比较原始 Encoder–Decoder 与 GPT-2 的结构差异。交互实验计算张量形状、Attention 权重和存储容量，不预测 GPU 耗时。</p>
+<noscript><p>JavaScript 当前不可用：正文、公式和开源链接仍可阅读；形状、数值与容量实验需要启用 JavaScript。</p></noscript>
+<nav aria-label="本章速览"><a href="#tf-architecture">架构与参数</a><a href="#tf-block">完整一层</a><a href="#tf-execution">GPU 执行</a><a href="#tf-attention">计算实验</a><a href="#tf-phases">训练与推理</a><a href="#tf-memory">容量与瓶颈</a><a href="#tf-open-source">开源实例</a><a href="#tf-practice">运行与验证</a></nav>
+</header>
+<section id="tf-architecture"><h2>5.1 从文本到模型：参数与运行时状态</h2>
+<p>Tokenizer 把文本转换为整数 ID；一个 token 不一定等于一个汉字或单词。Embedding 用 ID 从训练好的表 E 中取一行，组成 X。若词表大小为 Vocab、隐藏宽度为 D，E 的形状为 [Vocab,D]，X 为 [B,T,D]。ID 不是送进浮点矩阵乘法的词义数值。</p>
+<div class="summary-table"><table><caption>同一个 Attention 公式，输入来源与可见范围不同</caption><thead><tr><th>结构</th><th>Q / K / V 从哪里来</th><th>位置可以读取谁</th></tr></thead><tbody><tr><td>原论文 Encoder</td><td>同一源序列的隐藏状态</td><td>全部有效源位置，屏蔽 padding</td></tr><tr><td>原论文 Decoder self-attention</td><td>目标序列的隐藏状态</td><td>目标位置自身及左侧前缀</td></tr><tr><td>Decoder cross-attention</td><td>Q 来自目标端；K/V 来自 Encoder 输出</td><td>全部有效源位置；矩阵可为 T目标 × T源</td></tr><tr><td>本章 Decoder-only</td><td>prompt 与生成文本形成同一序列</td><td>因果 self-attention，无独立 Encoder 和 cross-attention</td></tr></tbody></table></div>
+<p>原论文使用位置编码、LayerNorm 和普通 FFN；这里的 RoPE、RMSNorm、SwiGLU 是另一组常见选择，并非所有 Transformer 必须采用。<a href="https://arxiv.org/abs/1706.03762">原论文：Attention Is All You Need</a>。</p>
+<div class="summary-table"><table><caption>权重可跨请求共用，缓存属于具体请求和层</caption><thead><tr><th>对象</th><th>何时产生</th><th>常见驻留位置与用途</th></tr></thead><tbody><tr><td>E、WQ/WK/WV、WO、MLP 权重、Norm 缩放参数、LM head</td><td>训练更新，加载 checkpoint 后推理固定</td><td>设备内存中的持久张量；计算时按块读到片上</td></tr><tr><td>X、Q/K/V、Attention 输出、logits</td><td>前向计算产生</td><td>中间激活；融合可避免部分中间张量落到显存</td></tr><tr><td>每层 KV cache</td><td>请求的 Prefill 建立，Decode 追加</td><td>保存该层各位置的 K/V，通常在设备内存；不是硬件 L1/L2 cache</td></tr><tr><td>梯度、优化器状态</td><td>训练反向与更新阶段</td><td>增加训练内存需求；普通推理无需保存</td></tr></tbody></table></div>
+<p>模型参数量不会随 prompt 变长而增加；KV cache 会。Q 是本轮查询，未来 token 用的是新 Q，所以标准 KV cache 不存历史 Q。</p>
+</section>
+<section id="tf-block"><h2>5.2 完整的一层：把公式落实到张量</h2>
+<p>记 B 为请求数，T 为本次输入位置数，S 为可读取的 KV 总长度，L 为层数，Hq 为 Query 头数，Hkv 为 KV 头数，d 为每头宽度，D=Hq×d，F 为 MLP 中间宽度。MHA 有 Hkv=Hq；GQA 让 Hq/Hkv 个 Query 头共享一组 K/V；MQA 取 Hkv=1。共享不意味着所有 Query 头输出相同。</p>
+<pre class="tf-equation"><code>U = RMSNorm(X)                                 # [B,T,D]
+Q = reshape(U WQ) ; K = reshape(U WK) ; V = reshape(U WV)
+Q, K = RoPE(Q, K, absolute_positions)            # 对 Q/K 成对旋转
+Kall, Vall = append_to_layer_cache(K, V)         # 推理时；保留层的身份
+Z = softmax(Q Kallᵀ / √d + mask) Vall            # [B,Hq,T,d]
+Y = X + concat_heads(Z) WO                      # 第一条残差
+R = RMSNorm(Y)
+Xnext = Y + (SiLU(R Wgate) ⊙ (R Wup)) Wdown      # 第二条残差
+# 重复 L 层后：final_norm → LM head → logits → 采样 token ID</code></pre>
+<p>上述公式省略 GQA 的头索引广播：Query 头 h 使用 KV 头 <code>⌊h / (Hq/Hkv)⌋</code>，要求 Hq 能被 Hkv 整除。Q 布局为 [B,Hq,T,d]，K/V 为 [B,Hkv,S,d]；不能在头数不同的情况下直接当作同形状批矩阵相乘。</p>
+<p>RMSNorm 为每个 token 沿 D 计算平方均值：<code>x / √(mean(x²)+ε) ⊙ γ</code>；LayerNorm 还减去均值。它们引入归约依赖。RoPE 旋转每个头的特征对，使 Q/K 点积包含相对位置信息；缓存一般保存已旋转的 K。新 token 的绝对位置必须延续前缀，不能每轮从零开始。</p>
+<div class="summary-table"><table><caption>一次前向中的算子账本（权重按 XW 的数学布局书写）</caption><thead><tr><th>算子</th><th>形状或核心计算</th><th>主要 GPU 工作</th></tr></thead><tbody><tr><td>QKV 投影</td><td>[BT,D] × [D,(Hq+2Hkv)d]</td><td>可合并投影为一次 GEMM；按输出块分给 Thread Block</td></tr><tr><td>QKᵀ</td><td>每头 [T,d] × [d,S] → [T,S]</td><td>批量矩阵乘；沿 d 归约</td></tr><tr><td>Mask + softmax</td><td>沿 S 求 max、exp、sum，再归一化</td><td>普通算术／特殊函数与归约；不是 Tensor Core 完成所有步骤</td></tr><tr><td>PV 与 WO</td><td>[T,S] × [S,d]；[BT,D] × [D,D]</td><td>矩阵乘；合并头可能需要布局变换</td></tr><tr><td>SwiGLU MLP</td><td>两次 [BT,D] × [D,F]，一次 [BT,F] × [F,D]</td><td>矩阵乘 + SiLU 与逐元素乘；无跨 token 混合</td></tr><tr><td>LM head</td><td>[B,D] × [D,Vocab]（仅下一 token）</td><td>词表投影、采样归约；训练通常对所有位置计算损失</td></tr></tbody></table></div>
+<p>Attention 混合不同位置，MLP 逐位置共享相同权重。<strong>“一层 Transformer”是模型结构，“一个 CUDA Thread Block”是一次 Kernel 的线程协作单位，两者不一一对应。</strong>一个模型层通常启动多个 Kernel；融合可能把相邻步骤合并。</p>
+</section>
+<section id="tf-execution"><h2>5.3 从框架算子到 Warp 与矩阵单元</h2>
+<p>框架读取 shape、dtype、stride、mask 等条件，选择库或编译生成的 Kernel；运行时与驱动提交设备工作。SM 接收可驻留的 Thread Block，Warp 调度器发射已就绪的指令。数据依赖仍必须满足，同一 stream 的有序执行不是“CPU 等每个 Kernel 完成”。回读<a href="chapter-02.html#submission-path">第三章的提交路径</a>。</p>
+<ol><li><strong>分配输出：</strong>以 QKV 投影为例，M=BT，N=(Hq+2Hkv)d，K=D。一个 Thread Block 常处理 BM×BN 输出块，多个 Warp 协作完成子块；并非一个 token 固定占一个 Warp。</li><li><strong>供给数据：</strong>全局加载经缓存访问设备内存。块可把 X/W 的 tile 放入共享内存，Warp 以适合指令的布局读取；累加状态使用寄存器等片上资源。共享内存是显式协作存储，不是 HBM 与 L2 之间的必经缓存层。</li><li><strong>发射计算：</strong>合适的形状、精度与实现可使用矩阵指令；归约、地址计算、掩码和激活仍由其他指令处理。Hopper / Blackwell 的异步矩阵指令和数据路径另见<a href="chapter-matrix.html#gemm-hardware">4.5</a>，不能把某一种寄存器片段路径泛化到全部架构。</li><li><strong>交叠与完成：</strong>下一块搬入可与当前块计算交叠，但使用前要等待数据就绪、覆盖前要确认消费者读完。更大 tile 提高复用，也可能占用更多共享内存／寄存器，减少驻留块数量。</li></ol>
+<div class="tf-callout"><strong>融合减少的是哪些字节？</strong><p>若 Norm 后的张量写到显存，后续 Kernel 再读一次，就多了一次中间张量往返。融合可减少这些访问和启动开销，但也会扩大活跃状态。优化应结合<a href="chapter-hardware.html#hardware-bottlenecks">Roofline</a>与<a href="chapter-matrix.html#gemm-performance">资源预算</a>，不能用“Kernel 数更少”直接判定更快。</p></div>
+<h3>实验 A · 同一模型在两个阶段，工作形状如何变化？</h3>
+<div class="experiment" id="tf-shape-lab"><div class="tf-controls"><label>阶段<select id="tf-phase"><option value="prefill">Prefill：输入整个前缀</option><option value="decode">Decode：已有缓存，输入一个新位置</option></select></label><label>KV 总长度 S（含当前输入）<select id="tf-length"><option>128</option><option selected>2048</option><option>8192</option></select></label><label>请求数 B<select id="tf-batch"><option selected>1</option><option>8</option><option>32</option></select></label><label>KV 结构<select id="tf-heads"><option value="32">MHA · 32 KV heads</option><option value="8" selected>GQA · 8 KV heads</option><option value="1">MQA · 1 KV head</option></select></label></div>
+<p>D=4096，Hq=32，d=128，F=11008，L=32；输入和权重按 BF16/FP16 的 2 byte 估计。</p>
+<div id="tf-shape-output" aria-live="polite"></div><figure><div id="tf-work-grid" class="tf-work-grid" aria-label="一个 Q 投影输出特征 tile 对应的 token tile 数"></div><figcaption id="tf-work-caption"></figcaption></figure>
+<p class="model-note">图中每格表示 M 方向的一个 64 行 tile，仅展示固定的一个 N tile，最多显示 64 格；不是 SM 数量，也不是实际调度。FLOP 按一次乘加为 2 计，只统计矩阵乘法。Attention 使用稠密矩形计数，causal Kernel 可跳过完全被屏蔽的块。</p></div>
+</section>
+<section id="tf-attention"><h2>5.4 Attention：数值、掩码与片上归约</h2>
+<p>设 Q=K=[(1,0),(0,1),(1,1),(−1,1)]，V=[(1,0),(0,2),(3,1),(−1,2)]，d=2。下面由这些数值实际计算权重；颜色与结果随掩码和 Query 行变化，不代表训练模型学到的词义。</p>
+<div class="experiment" id="tf-attention-lab"><div class="tf-controls"><label>可见范围<select id="tf-mask"><option value="causal">Decoder：causal</option><option value="full">Encoder：全部可见</option></select></label><label>观察 Query 位置<select id="tf-query"><option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label></div><figure><div id="tf-heatmap" class="tf-heatmap" role="img" aria-label="四行 Query、四列 Key 的 Attention 权重"></div><figcaption>行是 Query，列是 Key；“×”为 masked，权重为零；边框标出正在展开的 Query 行。</figcaption></figure><div id="tf-attention-output" aria-live="polite"></div></div>
+<p>Softmax 必须先沿一行找到最大值 m，再计算 exp(s−m) 和分母。这说明为什么“一线程一个输出元素”不能独立完成全部过程：同一行需要交换统计量。Warp shuffle 可交换 lane 数据，跨 Warp 协作可能借助共享内存与同步，具体组织由行长和 Kernel 决定。</p>
+<h3>FlashAttention 为什么不需要把 T×T 权重全部存回显存？</h3>
+<p>常规分步计算可把 scores / probabilities 物化为 [B,Hq,T,S]。融合实现按 Q/K/V tile 处理，将分数块和归约状态保留在片上，直接累计输出。它仍计算带 softmax 的 Attention，不能改写成 Q(KᵀV)，也没有把普通稠密 Attention 的计算复杂度降为线性。</p>
+<pre class="tf-equation"><code>对同一 Query 行逐块读取 K/V；s 已包含缩放与掩码：
+m′ = max(m, max(s块))
+α  = exp(m − m′) ; p块 = exp(s块 − m′)
+ℓ′ = α ℓ + sum(p块)
+o′ = α o + p块 V块
+全部块完成后，输出 z = o / ℓ
+初始 m=−∞，ℓ=0，o=0；全 masked 的块直接跳过。</code></pre>
+<p>m 改变时，旧分母与旧输出分子必须同时重标度；把各块 softmax 的结果直接平均会错。全行没有有效 Key 时需要显式约定输出，不能计算 −∞−(−∞)。这里每行至少包含自身。详细分块推导与实验见<a href="../topics/attention-decode.html#tiling">Attention Decode 专题第 5 节</a>；<a href="https://github.com/Dao-AILab/flash-attention">作者实现与硬件支持说明</a>。</p>
+</section>
+<section id="tf-phases"><h2>5.5 训练、Prefill、Decode 的依赖为何不同？</h2>
+<div class="summary-table"><table><thead><tr><th>阶段</th><th>计算哪些位置</th><th>并行性与状态</th></tr></thead><tbody><tr><td>训练</td><td>已知完整训练序列；位置 i 预测标签 i+1</td><td>teacher forcing 允许一次处理多个位置，但用 causal mask 防止看到未来；反向依赖前向激活</td></tr><tr><td>Prefill</td><td>输入 prompt 的 T 个位置</td><td>每层生成全部 prompt K/V；位置间矩阵运算可批量执行；层与层依赖仍存在</td></tr><tr><td>Decode</td><td>每请求一个新输入 token</td><td>复用各层历史 KV，追加新 KV；本轮输出 token 才能成为下一轮输入</td></tr></tbody></table></div>
+<p><strong>第一枚生成 token 来自 Prefill 最后位置的 logits。</strong>接着才把这枚 token 输入 Decode，计算它的 K/V 并预测第二枚生成 token。刚采样出的 token 还没有自己的 KV，直到它被作为输入经过各层。</p>
+<p>假设 prompt 长度为 4：Prefill 计算位置 0…3，cache 长度为 4，采样位置 4 的 token；第一次 Decode 输入位置 4，cache 变为 5，采样位置 5 的 token。该约定也用于实验 A：Decode 的 S 包含刚追加的当前位置，进入前的 cache 长度是 S−1。</p>
+<p>Decode 的 Query 长度为 1，但 Key 长度为 S；仍需读取整个可见历史。对“只有历史与当前项、没有 padding 的单 Query”可不再加 causal mask。直接把非方形 SDPA 的 <code>is_causal=True</code> 当作缓存位置偏移可能错误：PyTorch 的该语义为左上对齐。多 token 的 chunked prefill、批内不同长度和 padding 需显式构造正确的绝对位置 mask。参见<a href="https://docs.pytorch.org/docs/main/generated/torch.nn.functional.scaled_dot_product_attention.html">SDPA 接口约定</a>。</p>
+<h3>训练多了哪些硬件工作？</h3>
+<p>以 Y=XW 为例，反向需要 dX=dY Wᵀ 和 dW=XᵀdY，依然是矩阵乘，dW 还归约 token 维。Attention 反向需要对应中间量或重算，优化器读写参数与状态。Activation checkpointing 用重算减少保存的激活；普通训练通常关闭用于自回归服务的 KV cache。多设备训练还增加梯度等通信，不能仅按单 GPU GEMM 峰值推断速度。</p>
+</section>
+<section id="tf-memory"><h2>5.6 参数、KV 与瓶颈：分别记账</h2>
+<p>对于上面的无 bias、两次 RMSNorm、SwiGLU、无可学习位置表模型，可用以下式子区分静态参数和运行时存储。Norm 参数也计入；若换回普通两矩阵 FFN，MLP 参数项是 2DF，不是 3DF。</p>
+<pre class="tf-equation"><code>P层 = D(Hq + 2Hkv)d + D² + 3DF + 2D
+P总 = L P层 + D + Vocab·D × (权重绑定时 1，否则 2)
+KV bytes = B × L × S × 2 × Hkv × d × bytes_KV
+完整分数张量 bytes = B × Hq × T × S × bytes_score
+某 GEMM：FLOP ≈ 2MNK
+理想单次读取／写出字节 = (MK + KN + MN) × bytes
+I = FLOP / bytes；t 下界 ≥ max(FLOP / P有效, bytes / BW有效)</code></pre>
+<p>最后两行是假设同一精度、每个输入只读一次且输出写一次的教学估计；真实 DRAM 流量受缓存、重复读、布局转换与融合影响。Roofline 下界也不包含所有启动、同步和通信延迟。<a href="chapter-hardware.html#hardware-bottlenecks">回读第二章的量纲与边界</a>。</p>
+<div class="experiment" id="tf-budget-lab"><h3>实验 B · 改变缓存长度与精度</h3><p>沿用实验 A 的 B、S、Hkv 与固定模型尺寸；Vocab=32000。调节实验 A 后，此处同步更新。</p><div class="tf-controls"><label>KV 精度<select id="tf-kv-bytes"><option value="2">FP16 / BF16 · 2 byte</option><option value="1">8-bit · 1 byte（仅 payload）</option><option value="4">FP32 · 4 byte</option></select></label><label>Embedding 与 LM head<select id="tf-tied"><option value="1">绑定权重</option><option value="2">不绑定</option></select></label></div><div id="tf-budget-output" aria-live="polite"></div><figure><div id="tf-memory-chart" class="tf-memory-chart"></div><figcaption>条长按当前两项的最大值线性归一化，数值为 GiB；仅比较 2 byte 权重与 KV payload，不代表设备总内存使用率。</figcaption></figure></div>
+<p>量化 KV 的实际占用还包含 scale、可能的 zero-point、对齐与分页开销；权重量化与 KV 量化是独立选择。总显存还包括临时激活、workspace、分配器保留空间与运行时资源。训练还需加入梯度和优化器状态；“模型权重装得下”不意味着推理一定装得下。</p>
+<h3>为什么 Prefill 常偏计算，Decode 常偏带宽？</h3>
+<p>Prefill 的线性层有许多输入行，同一权重 tile 可服务多个 token。小 batch Decode 的 M=B 很小，大量权重只服务少数行，复用较弱；长上下文还增加历史 KV 的读取。以 FP16 的 Q 投影、D=4096、B=1 为例：权重约 32 MiB，每轮约 33.55 MFLOP，忽略输入输出时约 1 FLOP/byte。增大 B 能提高权重复用，却同时增加 KV 和延迟。这些是瓶颈假设；短序列可能由启动开销主导，长 Prefill 的 Attention 也可能受访存限制。</p>
+<p>GQA 减小 KV 的存储与投影宽度，但不会减少 Hq 个查询所需的逻辑注意力输出；只有实现实际复用共享的 K/V 时，带宽收益才会兑现。PagedAttention 将逻辑连续的 KV 映射到物理块，减少预留与碎片；这些 <em>cache blocks</em> 不是 CUDA Thread Blocks。FlashAttention 优化算子内部 IO，分页管理请求缓存，两者可结合。<a href="https://docs.vllm.ai/en/latest/design/paged_attention/">vLLM 的历史 PagedAttention Kernel 解析</a>。</p>
+<h3>把分析方法迁移到昇腾</h3>
+<p>用 Cube 承载适合的矩阵任务，Vector 处理 softmax、Norm 等，按目标型号安排 GM、UB、L1/L0 和 MTE 数据搬运及流水同步。需要重新推导切块、布局与容量；不能将 Warp、SM、共享内存直接替换成某个昇腾术语。接着阅读<a href="../topics/attention-decode.html#ascend">已有 Ascend C 专题</a>和<a href="chapter-matrix.html#gemm-transformer">4.7 的 CANN 衔接</a>。</p>
+</section>
+<section id="tf-open-source"><h2>5.7 已实现的开源实例：按问题读代码</h2>
+<p>以下实现分别展示模型计算、融合算子与推理服务。复现实验时记录 commit、框架版本和硬件，先验证数值正确性，再分析性能。</p>
+<div class="summary-table"><table><caption>从模型语义到算子实现再到服务系统</caption><thead><tr><th>入口</th><th>优先读什么</th><th>如何连接本章</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/karpathy/llm.c">llm.c</a></td><td><a href="https://github.com/karpathy/llm.c/blob/master/train_gpt2.py">train_gpt2.py</a> 中 CausalSelfAttention、MLP、Block；再对照 <a href="https://github.com/karpathy/llm.c/blob/master/train_gpt2.cu">train_gpt2.cu</a> 的前向与训练组织</td><td>看完整模型如何拆成矩阵乘、Norm、残差与损失。GPT-2 使用可学习位置 embedding、LayerNorm、GELU；不要把它当作本章 RoPE/SwiGLU 模型。</td></tr>
+<tr><td><a href="https://docs.pytorch.org/docs/main/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch SDPA</a></td><td>输入布局、mask、dropout、enable_gqa 与 backend 选择</td><td>同一接口可派发不同后端；调用 SDPA 不等于必然运行 FlashAttention。正确处理训练／推理时的 dropout_p 和非方形 mask。</td></tr>
+<tr><td><a href="https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html">Triton Fused Attention</a></td><td>先读 _attn_fwd，再看 _attn_fwd_inner 中分块读取、tl.dot 和 m/ℓ/累加量更新</td><td>对应 5.4 的 online softmax：把算法状态直接映射到 tile 程序。教程使用 exp2 时须相应换算缩放因子；tile 不是完整 T×T 矩阵。</td></tr>
+<tr><td><a href="https://github.com/Dao-AILab/flash-attention">FlashAttention</a></td><td>README 的接口、形状、精度、GPU 要求与 causal 语义；再按架构进入对应实现</td><td>观察生产级融合 Attention 如何组织数据复用和并行工作。不同版本的目标架构与支持范围不同，性能结果需结合测试硬件和输入配置解读。</td></tr>
+<tr><td><a href="https://docs.vllm.ai/en/latest/design/paged_attention/">vLLM PagedAttention</a></td><td>逻辑 token → block table → KV 物理块，再看 QK、softmax、V 的访问布局</td><td>说明多请求缓存管理与 Attention Kernel 的连接。该文档解释历史 Kernel，当前部署实际后端应检查运行配置。</td></tr>
+<tr><td><a href="https://github.com/Ascend/samples">Ascend samples</a></td><td>按目标 CANN 版本选择 Ascend C 的算子调用、MatMul 与数据搬运示例</td><td>用于练习 host tiling、核内缓冲与同步；这是构建算子的基础示例入口，不声称整个仓库是可直接替换的 Transformer 模型。</td></tr>
+</tbody></table></div>
+<p>建议顺序：llm.c 的 Python 模型 → 本章最小验证程序 → Triton 的融合 Attention → FlashAttention 的实现约束 → vLLM 的缓存寻址。这样每个项目都回答一个具体问题，而不是只记住加速库的名字。</p>
+</section>
+<section id="tf-practice"><h2>5.8 运行一个小模型，检验缓存等价性</h2>
+<p><a href="../examples/transformer_reference.py" download>下载 transformer_reference.py</a>：一个两层、D=32 的随机权重 Decoder，包含 RMSNorm、RoPE、MHA、SwiGLU、残差与绑定 LM head。它不会下载 checkpoint，也不生成有意义的文本；用于检验每个 token 在完整 causal 前向和逐 token 缓存前向中得到一致 logits。</p>
+<pre><code>python3 examples/transformer_reference.py --device cpu
+# 已有支持 CUDA 的 PyTorch 与 NVIDIA GPU 时：
+python3 examples/transformer_reference.py --device cuda
+# Apple Silicon 上，安装支持 MPS 的 PyTorch 后可运行：
+python3 examples/transformer_reference.py --device mps</code></pre>
+<p>程序需要 PyTorch 2.x，使用 FP32 与容差比较，验证完整前向、先 Prefill 再 Decode、逐 token 解码，并对照显式 softmax 的 Attention。为了易读使用 torch.cat 扩展缓存，会反复复制；服务端应使用预分配或分页缓存。本例不支持 padding、GQA 或 chunked decode，也不作为性能基准。MPS 是另一硬件后端，不能用它证明 NVIDIA Tensor Core 的性能。</p>
+<h3>真正测量时要记录什么？</h3>
+<ol><li>固定模型、B、prompt 长度、输出长度、dtype、后端、设备和软件版本；分开记录 Prefill 时间、首 token 延迟、稳态单 token 延迟与吞吐。</li><li>先预热，GPU 计时用设备事件或在计时边界同步；只测 Python 调用耗时可能测到的是提交时间。不要把模型加载混入稳态 Kernel 耗时。</li><li>用 profiler 查看 GEMM／Attention／Norm 的耗时与 Kernel 数，再结合 DRAM 流量、带宽、资源占用提出假设；若测服务，则另计排队、调度、采样和通信。</li><li>每次改变 tile、融合、精度或缓存布局后，比较 logits 或算子输出误差；生成文本相同不是充分的数值正确性检验。</li></ol>
+<h3>理解检查</h3>
+<details><summary>Decode 只输入一个 token，为什么计算不会变成常数开销？</summary><p>每层仍读取模型权重并处理越来越长的 KV；标准密集 Attention 每轮计算随 S 增长。缓存省掉历史位置的重复投影和层计算，没有省掉当前 Query 对历史 Key 的匹配。</p></details>
+<details><summary>一个 Attention head 是否对应一个 Warp？</summary><p>不是。head 是数学轴，Warp 是执行组织。一个 head 可以由多个 Thread Block／Warp 处理；具体映射由形状、切块与实现决定。</p></details>
+<details><summary>GQA 从 32 个 KV heads 改为 8 个，全部模型开销都降为四分之一吗？</summary><p>在其他条件不变时 KV payload 为四分之一，K/V 投影也变窄；Query 头数、输出投影和 MLP 不因此变为四分之一。</p></details>
+<details><summary>FlashAttention 是靠忽略低权重位置来节省内存吗？</summary><p>不是。它重排精确 Attention 的分块与归约，避免完整中间矩阵写回；浮点归约顺序可能产生误差，但不是稀疏近似算法。</p></details>
+<p class="tf-callout">下一步：进入<a href="../topics/attention-decode.html">线性代数与 Attention Decode 专题</a>，手算分块合并，再将相同的数据依赖迁移到 Ascend C。</p>
+</section>
+
+</main></body></html>
